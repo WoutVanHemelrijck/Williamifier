@@ -137,7 +137,11 @@ fn hide_icons() {
 impl App for WilliamifyApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, "presets", &self.gui.presets);
-        eframe::set_value(storage, "has_williamified_once", &self.gui.has_williamified_once);
+        eframe::set_value(
+            storage,
+            "has_williamified_once",
+            &self.gui.has_williamified_once,
+        );
     }
     fn update(&mut self, ctx: &egui::Context, frame: &mut Frame) {
         let Some(rs) = frame.wgpu_render_state() else {

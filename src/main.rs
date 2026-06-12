@@ -3,8 +3,6 @@
 
 #[cfg(not(target_arch = "wasm32"))]
 fn regen_presets() {
-
-
     let preset_names = ["wisetree", "blackhole", "cat", "cat2", "colorful"];
     let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
     let presets_dir = manifest_dir.join("presets");
@@ -12,8 +10,12 @@ fn regen_presets() {
     // Load target + weights (same files the app embeds at compile time)
     let target_bytes = include_bytes!("app/calculate/target256.png");
     let weights_bytes = include_bytes!("app/calculate/weights256.png");
-    let target_img = image::load_from_memory(target_bytes).expect("target").to_rgb8();
-    let weights_img = image::load_from_memory(weights_bytes).expect("weights").to_rgb8();
+    let target_img = image::load_from_memory(target_bytes)
+        .expect("target")
+        .to_rgb8();
+    let weights_img = image::load_from_memory(weights_bytes)
+        .expect("weights")
+        .to_rgb8();
 
     // Replicate GenerationSettings defaults (sidelen=128, proximity_importance=13, genetic)
     let sidelen: u32 = 128;
@@ -39,7 +41,6 @@ fn regen_presets() {
             image::imageops::FilterType::Lanczos3,
         );
 
-
         let source_pixels: Vec<(u8, u8, u8)> = source_resized
             .pixels()
             .map(|p| (p[0], p[1], p[2]))
@@ -63,10 +64,7 @@ fn regen_presets() {
             sidelen,
             image::imageops::FilterType::Lanczos3,
         );
-        let weights: Vec<i64> = weights_resized
-            .pixels()
-            .map(|p| p[0] as i64)
-            .collect();
+        let weights: Vec<i64> = weights_resized.pixels().map(|p| p[0] as i64).collect();
 
         let n = (sidelen * sidelen) as usize;
         assert_eq!(source_pixels.len(), n);
@@ -75,12 +73,15 @@ fn regen_presets() {
         // === Genetic algorithm (exact copy of process_genetic in calculate/mod.rs) ===
         #[inline(always)]
         fn heuristic(
-            apos: (u16, u16), bpos: (u16, u16),
-            a: (u8, u8, u8), b: (u8, u8, u8),
-            color_weight: i64, spatial_weight: i64,
+            apos: (u16, u16),
+            bpos: (u16, u16),
+            a: (u8, u8, u8),
+            b: (u8, u8, u8),
+            color_weight: i64,
+            spatial_weight: i64,
         ) -> i64 {
-            let spatial = (apos.0 as i64 - bpos.0 as i64).pow(2)
-                + (apos.1 as i64 - bpos.1 as i64).pow(2);
+            let spatial =
+                (apos.0 as i64 - bpos.0 as i64).pow(2) + (apos.1 as i64 - bpos.1 as i64).pow(2);
             let color = (a.0 as i64 - b.0 as i64).pow(2)
                 + (a.1 as i64 - b.1 as i64).pow(2)
                 + (a.2 as i64 - b.2 as i64).pow(2);
@@ -89,7 +90,8 @@ fn regen_presets() {
 
         #[derive(Clone, Copy)]
         struct Pixel {
-            src_x: u16, src_y: u16,
+            src_x: u16,
+            src_y: u16,
             rgb: (u8, u8, u8),
             h: i64,
         }
@@ -101,11 +103,19 @@ fn regen_presets() {
                 let x = (i as u32 % sidelen) as u16;
                 let y = (i as u32 / sidelen) as u16;
                 let h = heuristic(
-                    (x, y), (x, y),
-                    (r, g, b), target_pixels[i],
-                    weights[i], proximity_importance,
+                    (x, y),
+                    (x, y),
+                    (r, g, b),
+                    target_pixels[i],
+                    weights[i],
+                    proximity_importance,
                 );
-                Pixel { src_x: x, src_y: y, rgb: (r, g, b), h }
+                Pixel {
+                    src_x: x,
+                    src_y: y,
+                    rgb: (r, g, b),
+                    h,
+                }
             })
             .collect();
 
@@ -119,11 +129,9 @@ fn regen_presets() {
                 let apos = rng.gen_range(0..pixels.len() as u32) as usize;
                 let ax = apos as u16 % sidelen as u16;
                 let ay = apos as u16 / sidelen as u16;
-                let bx = (ax as i16
-                    + rng.gen_range(-(max_dist as i16)..(max_dist as i16 + 1)))
+                let bx = (ax as i16 + rng.gen_range(-(max_dist as i16)..(max_dist as i16 + 1)))
                     .clamp(0, sidelen as i16 - 1) as u16;
-                let by = (ay as i16
-                    + rng.gen_range(-(max_dist as i16)..(max_dist as i16 + 1)))
+                let by = (ay as i16 + rng.gen_range(-(max_dist as i16)..(max_dist as i16 + 1)))
                     .clamp(0, sidelen as i16 - 1) as u16;
                 let bpos = by as usize * sidelen as usize + bx as usize;
 
@@ -131,12 +139,20 @@ fn regen_presets() {
                 let t_b = target_pixels[bpos];
 
                 let a_on_b = heuristic(
-                    (pixels[apos].src_x, pixels[apos].src_y), (bx, by),
-                    pixels[apos].rgb, t_b, weights[bpos], proximity_importance,
+                    (pixels[apos].src_x, pixels[apos].src_y),
+                    (bx, by),
+                    pixels[apos].rgb,
+                    t_b,
+                    weights[bpos],
+                    proximity_importance,
                 );
                 let b_on_a = heuristic(
-                    (pixels[bpos].src_x, pixels[bpos].src_y), (ax, ay),
-                    pixels[bpos].rgb, t_a, weights[apos], proximity_importance,
+                    (pixels[bpos].src_x, pixels[bpos].src_y),
+                    (ax, ay),
+                    pixels[bpos].rgb,
+                    t_a,
+                    weights[apos],
+                    proximity_importance,
                 );
 
                 if pixels[apos].h - b_on_a + pixels[bpos].h - a_on_b > 0 {

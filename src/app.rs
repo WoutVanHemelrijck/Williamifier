@@ -1813,4 +1813,4 @@ macro_rules! include_presets {
     };
 }
 
-include_presets! { "wisetree", "blackhole", "cat", "cat2", "colorful" }
+include_presets! { "Cat", "Checkboard", "Kitten", "Wout" }

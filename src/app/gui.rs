@@ -10,7 +10,6 @@ use crate::app::calculate::util::CropScale;
 use crate::app::calculate::util::GenerationSettings;
 use crate::app::calculate::util::SourceImg;
 use crate::app::gif_recorder::GIF_FRAMERATE;
-use crate::app::gif_recorder::GIF_RESOLUTION;
 use crate::app::gif_recorder::GifStatus;
 use crate::app::preset::Preset;
 use crate::app::preset::UnprocessedPreset;
@@ -21,7 +20,6 @@ use egui::Modal;
 use egui::TextureHandle;
 use egui::Window;
 use image::buffer::ConvertBuffer;
-use image::imageops;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
@@ -33,8 +31,6 @@ use uuid::Uuid;
 #[derive(Default)]
 struct GuiImageCache {
     source_preview: Option<egui::TextureHandle>,
-    target_preview: Option<egui::TextureHandle>,
-    overlap_preview: Option<egui::TextureHandle>,
 }
 
 pub(crate) struct GuiState {
@@ -326,52 +322,9 @@ impl App for WilliamifyApp {
                         }
 
                         GuiMode::Transform => {
-                            ui.horizontal_wrapped(|ui| {
-                                if ui.add(egui::Button::new("play transformation")).clicked() {
-                                    self.gui.animate = true;
-                                    self.sim.prepare_play(&mut self.seeds, self.reverse);
-                                }
-                                if ui
-                                    .add(egui::Checkbox::new(&mut self.reverse, "reverse"))
-                                    .changed()
-                                {
-                                    self.gui.animate = true;
-                                    self.reset_sim(device, &rs.queue);
-                                }
-                                // if ui.button("reload").clicked() {
-                                //     self.reset_sim(device, &rs.queue);
-                                //     self.gui.animate = false;
-                                // }
-                            });
-                            ui.separator();
-
-                            if ui
-                                .button(if self.reverse {
-                                    "save reverse gif"
-                                } else {
-                                    "save gif"
-                                })
-                                .clicked()
-                            {
-                                self.gif_recorder.status = GifStatus::Recording;
-                                self.gif_recorder.encoder = None;
-                                if let Err(err) = self
-                                    .gif_recorder
-                                    .init_encoder(self.colors.read().unwrap().as_ref())
-                                {
-                                    self.gif_recorder.status = GifStatus::Error(err.to_string());
-                                } else {
-                                    self.resize_textures(
-                                        device,
-                                        (GIF_RESOLUTION, GIF_RESOLUTION),
-                                        false,
-                                    );
-                                    self.reset_sim(device, &rs.queue);
-                                    self.gui.animate = true;
-                                    for _ in 0..20 {
-                                        self.sim.update(&mut self.seeds, self.size.0);
-                                    }
-                                }
+                            if ui.add(egui::Button::new("play transformation")).clicked() {
+                                self.gui.animate = true;
+                                self.sim.prepare_play(&mut self.seeds, self.reverse);
                             }
 
                             ui.separator();
@@ -612,57 +565,18 @@ impl App for WilliamifyApp {
                             ui.separator();
 
                             let mut change_source = false;
-                            let mut change_target = false;
 
-                            ui.allocate_ui_with_layout(
-                                egui::vec2(max_w, 0.0),
-                                egui::Layout::left_to_right(egui::Align::Center)
-                                    .with_main_wrap(true)
-                                    .with_main_justify(true),
-                                |ui| {
-                                    ui.set_max_width(max_w);
-                                    if let Some((source_img, settings, cache)) =
-                                        self.gui.configuring_generation.as_mut()
-                                    {
-                                        change_source = image_crop_gui(
-                                            "source",
-                                            ui,
-                                            source_img,
-                                            &mut settings.source_crop_scale,
-                                            &mut cache.source_preview,
-                                        );
-                                        if is_landscape {
-                                            // ./arrow-right.svg
-                                            ui.vertical(|ui| {
-                                                image_overlap_preview(
-                                                    "overlap preview",
-                                                    ui,
-                                                    settings,
-                                                    cache,
-                                                    source_img,
-                                                    &settings.get_raw_target(),
-                                                    0.5,
-                                                );
-
-                                                ui.add(
-                                                    egui::Image::new(egui::include_image!(
-                                                        "./arrow-right.svg"
-                                                    ))
-                                                    .max_size(egui::vec2(50.0, 50.0)),
-                                                );
-                                            });
-                                        }
-
-                                        change_target = image_crop_gui(
-                                            "target",
-                                            ui,
-                                            &settings.get_raw_target(),
-                                            &mut settings.target_crop_scale,
-                                            &mut cache.target_preview,
-                                        );
-                                    }
-                                },
-                            );
+                            if let Some((source_img, settings, cache)) =
+                                self.gui.configuring_generation.as_mut()
+                            {
+                                change_source = image_crop_gui(
+                                    "source",
+                                    ui,
+                                    source_img,
+                                    &mut settings.source_crop_scale,
+                                    &mut cache.source_preview,
+                                );
+                            }
 
                             if change_source {
                                 prompt_image(
@@ -675,20 +589,6 @@ impl App for WilliamifyApp {
                                         {
                                             *src = img;
                                             cache.source_preview = None;
-                                        }
-                                    },
-                                );
-                            } else if change_target {
-                                prompt_image(
-                                    "choose custom target image",
-                                    self,
-                                    |_, mut img: SourceImg, app: &mut WilliamifyApp| {
-                                        img = ensure_reasonable_size(img);
-                                        if let Some((_, settings, cache)) =
-                                            &mut app.gui.configuring_generation
-                                        {
-                                            settings.set_raw_target(img);
-                                            cache.target_preview = None;
                                         }
                                     },
                                 );
@@ -1250,35 +1150,6 @@ fn ensure_reasonable_size(img: SourceImg) -> SourceImg {
     image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Lanczos3)
 }
 
-fn image_overlap_preview(
-    arg: &str,
-    ui: &mut egui::Ui,
-    settings: &GenerationSettings,
-    cache: &mut GuiImageCache,
-    source_img: &SourceImg,
-    get_raw_target: &SourceImg,
-    blend: f32,
-) {
-    let tex = if cache.overlap_preview.is_none()
-        || cache.source_preview.is_none()
-        || cache.target_preview.is_none()
-    {
-        let src_img = settings.source_crop_scale.apply(source_img, 64);
-        let tgt_img = settings.target_crop_scale.apply(get_raw_target, 64);
-        let blended = blend_rgb_images(&src_img, &tgt_img, blend);
-        let p = ui.ctx().load_texture(
-            arg,
-            egui::ColorImage::from_rgb([64, 64], blended.as_raw()),
-            egui::TextureOptions::LINEAR,
-        );
-        cache.overlap_preview = Some(p.clone());
-        p
-    } else {
-        cache.overlap_preview.as_ref().unwrap().clone()
-    };
-    ui.add(egui::Image::from_texture(&tex));
-}
-
 fn image_crop_gui(
     name: &'static str,
     ui: &mut egui::Ui,
@@ -1301,7 +1172,7 @@ fn image_crop_gui(
             Some(t) => t.clone(),
         };
         ui.add(egui::Image::from_texture(&tex));
-        if ui.button(format!("change {name} image")).clicked() {
+        if ui.button("change image").clicked() {
             open_file_dialog = true;
         }
         // crop sliders
@@ -1381,72 +1252,4 @@ fn get_default_preset_name(mut n: String) -> String {
         name = name.chars().take(20).collect();
     }
     name
-}
-
-// fn blend_rgb_images(a: &image::RgbImage, b: &image::RgbImage, alpha: f32) -> image::RgbImage {
-//     assert_eq!(
-//         a.dimensions(),
-//         b.dimensions(),
-//         "Images must have same dimensions"
-//     );
-//     let (w, h) = a.dimensions();
-//     let alpha = alpha.clamp(0.0, 1.0);
-//     let inv = 1.0 - alpha;
-//     let mut out = image::RgbImage::new(w, h);
-//     for y in 0..h {
-//         for x in 0..w {
-//             let pa = a.get_pixel(x, y);
-//             let pb = b.get_pixel(x, y);
-//             let r = (pa[0] as f32 * inv + pb[0] as f32 * alpha).round() as u8;
-//             let g = (pa[1] as f32 * inv + pb[1] as f32 * alpha).round() as u8;
-//             let bch = (pa[2] as f32 * inv + pb[2] as f32 * alpha).round() as u8;
-//             out.put_pixel(x, y, image::Rgb([r, g, bch]));
-//         }
-//     }
-//     out
-// }
-
-pub fn blend_rgb_images(a: &SourceImg, b: &SourceImg, alpha: f32) -> SourceImg {
-    assert_eq!(
-        a.dimensions(),
-        b.dimensions(),
-        "Images must have same dimensions"
-    );
-
-    let (w, h) = a.dimensions();
-    let k = alpha.clamp(0.0, 1.0);
-    let sigma = 1.5;
-    let a_blur = imageops::blur(a, sigma);
-    let b_blur = imageops::blur(b, sigma);
-
-    let mut out = SourceImg::new(w, h);
-
-    for y in 0..h {
-        for x in 0..w {
-            let pa = a.get_pixel(x, y);
-            let pb = b.get_pixel(x, y);
-            let ga = a_blur.get_pixel(x, y);
-            let gb = b_blur.get_pixel(x, y);
-
-            let l0 = 0.5 * (ga[0] as f32 + gb[0] as f32);
-            let l1 = 0.5 * (ga[1] as f32 + gb[1] as f32);
-            let l2 = 0.5 * (ga[2] as f32 + gb[2] as f32);
-
-            let ha0 = pa[0] as f32 - ga[0] as f32;
-            let ha1 = pa[1] as f32 - ga[1] as f32;
-            let ha2 = pa[2] as f32 - ga[2] as f32;
-
-            let hb0 = pb[0] as f32 - gb[0] as f32;
-            let hb1 = pb[1] as f32 - gb[1] as f32;
-            let hb2 = pb[2] as f32 - gb[2] as f32;
-
-            let r0 = (l0 + k * (ha0 + hb0)).clamp(0.0, 255.0).round() as u8;
-            let r1 = (l1 + k * (ha1 + hb1)).clamp(0.0, 255.0).round() as u8;
-            let r2 = (l2 + k * (ha2 + hb2)).clamp(0.0, 255.0).round() as u8;
-
-            out.put_pixel(x, y, image::Rgb([r0, r1, r2]));
-        }
-    }
-
-    out
 }

@@ -63,8 +63,6 @@ const DEFAULT_RESOLUTION: u32 = 1024;
 
 pub enum GuiMode {
     Transform,
-    #[cfg(not(target_arch = "wasm32"))]
-    Draw,
 }
 
 use crate::app::{calculate::ProgressMsg, morph_sim::Sim, preset::UnprocessedPreset};
@@ -259,6 +257,18 @@ impl WilliamifyApp {
         let device = &rs.device;
         let size = (DEFAULT_RESOLUTION, DEFAULT_RESOLUTION);
         egui_extras::install_image_loaders(&cc.egui_ctx);
+
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "comic_sans".to_owned(),
+            egui::FontData::from_static(include_bytes!("../assets/ComicSansMS.ttf")).into(),
+        );
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Proportional)
+            .unwrap()
+            .insert(0, "comic_sans".to_owned());
+        cc.egui_ctx.set_fonts(fonts);
 
         // get all folders in ../presets
         let presets: Vec<Preset> = if let Some(storage) = cc.storage {

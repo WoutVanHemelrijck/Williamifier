@@ -278,249 +278,157 @@ impl App for WilliamifyApp {
                     egui::Layout::top_down(egui::Align::Min)
                 },
                 |ui| {
-                    match self.gui.mode {
-                        #[cfg(not(target_arch = "wasm32"))]
-                        GuiMode::Draw => {
-                            if ui.button("reset").clicked() {
-                                self.init_canvas(device, &rs.queue);
+                    // preset picker (left side)
+                    egui::ComboBox::from_id_salt("preset_picker")
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .selected_text({
+                            let name = self.sim.name();
+                            if name.chars().count() > 13 {
+                                let truncated: String = name.chars().take(10).collect();
+                                format!("{truncated}…")
+                            } else {
+                                name.clone()
                             }
+                        })
+                        .show_ui(ui, |ui| {
+                            let mut to_remove: Option<usize> = None;
+                            let mut close_menu = false;
 
-                            while let Some(msg) = self.get_latest_msg() {
-                                match msg {
-                                    ProgressMsg::UpdatePreview {
-                                        width,
-                                        height,
-                                        data,
-                                    } => {
-                                        let image =
-                                            image::ImageBuffer::from_vec(width, height, data);
-                                        self.preview_image = image;
-                                    }
-                                    ProgressMsg::Cancelled => {
-                                        self.gui.process_cancelled.store(false, Ordering::Relaxed);
-                                        self.preview_image = None;
+                            for (i, preset) in self.gui.presets.clone().into_iter().enumerate() {
+                                ui.horizontal(|ui| {
+                                    let remove_enabled = self.gui.presets.len() > 4;
 
-                                        ui.close();
-                                    }
-                                    ProgressMsg::UpdateAssignments(assignments) => {
-                                        self.sim.set_assignments(assignments, self.size.0)
-                                    }
-                                    ProgressMsg::Progress(_) => todo!(),
-                                    ProgressMsg::Done(_) => todo!(),
-                                    ProgressMsg::Error(_) => todo!(),
-                                }
-                            }
+                                    let del_width = if remove_enabled {
+                                        let txt = egui::WidgetText::from("x");
+                                        let galley = txt.into_galley(
+                                            ui,
+                                            None,
+                                            f32::INFINITY,
+                                            egui::TextStyle::Button,
+                                        );
+                                        galley.size().x + ui.spacing().button_padding.x * 2.0
+                                    } else {
+                                        0.0
+                                    };
+                                    let spacing = if remove_enabled {
+                                        ui.spacing().item_spacing.x
+                                    } else {
+                                        0.0
+                                    };
+                                    let preset_width =
+                                        (ui.available_width() - del_width - spacing).max(0.0);
 
-                            if ui
-                                .add(egui::Button::new(egui::RichText::new("🏠")))
-                                .on_hover_text("transform mode")
-                                .clicked()
-                            {
-                                self.gui.mode = GuiMode::Transform;
-                                self.change_sim(device, &rs.queue, self.gui.presets[0].clone(), 0);
-                            }
-                        }
-
-                        GuiMode::Transform => {
-                            if ui.add(egui::Button::new("play transformation")).clicked() {
-                                self.gui.animate = true;
-                                self.sim.prepare_play(&mut self.seeds, self.reverse);
-                            }
-
-                            ui.separator();
-                            // choose preset
-                            // for (i, preset) in self.gui.presets.clone().into_iter().enumerate() {
-                            //     if ui.button(i.to_string()).clicked() {
-                            //         self.change_sim(device, preset);
-                            //         self.gui.animate = false;
-                            //     }
-                            // }
-                            ui.horizontal_wrapped(|ui| {
-                                #[cfg(not(target_arch = "wasm32"))]
-                                if ui
-                                    .button("export preset")
-                                    .on_hover_text(
-                                        "save current preset to presets/<name>/ for hardcoding",
-                                    )
-                                    .clicked()
-                                {
-                                    let preset = &self.gui.presets[self.gui.current_preset];
-                                    match export_preset(preset) {
-                                        Ok(dir) => {
-                                            opener::open(&dir).ok();
-                                        }
-                                        Err(e) => self.gui.show_error(e.to_string()),
-                                    }
-                                }
-                                ui.label("choose preset:");
-                                egui::ComboBox::from_label("")
-                                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                                    .selected_text({
-                                        let name = self.sim.name();
-                                        if name.chars().count() > 13 {
-                                            let truncated: String = name.chars().take(10).collect();
-                                            format!("{truncated}…")
-                                        } else {
-                                            name.clone()
-                                        }
-                                    })
-                                    .show_ui(ui, |ui| {
-                                        let mut to_remove: Option<usize> = None;
-                                        let mut close_menu = false;
-
-                                        for (i, preset) in
-                                            self.gui.presets.clone().into_iter().enumerate()
-                                        {
-                                            ui.horizontal(|ui| {
-                                                let remove_enabled = self.gui.presets.len() > 5;
-
-                                                // Calculate width for delete button (so preset button can fill the rest)
-                                                let del_width = if remove_enabled {
-                                                    let txt = egui::WidgetText::from("x");
-                                                    let galley = txt.into_galley(
-                                                        ui,
-                                                        None,
-                                                        f32::INFINITY,
-                                                        egui::TextStyle::Button,
-                                                    );
-                                                    galley.size().x
-                                                        + ui.spacing().button_padding.x * 2.0
-                                                } else {
-                                                    0.0
-                                                };
-                                                let spacing = if remove_enabled {
-                                                    ui.spacing().item_spacing.x
-                                                } else {
-                                                    0.0
-                                                };
-
-                                                let preset_width =
-                                                    (ui.available_width() - del_width - spacing)
-                                                        .max(0.0);
-
-                                                let selected = i == self.gui.current_preset;
-                                                let preset_resp = ui.add_sized(
-                                                    [preset_width, ui.spacing().interact_size.y],
-                                                    egui::Button::selectable(
-                                                        selected,
-                                                        &preset.inner.name,
-                                                    ),
-                                                );
-
-                                                if remove_enabled
-                                                    && ui
-                                                        .small_button("x")
-                                                        .on_hover_text("delete preset")
-                                                        .clicked()
-                                                {
-                                                    to_remove = Some(i);
-                                                } else if preset_resp.clicked() {
-                                                    self.change_sim(
-                                                        device,
-                                                        &rs.queue,
-                                                        preset.clone(),
-                                                        i,
-                                                    );
-                                                    self.gui.animate = true;
-                                                    self.gui.current_preset = i;
-                                                    close_menu = true;
-                                                }
-                                            });
-                                        }
-
-                                        if let Some(idx) = to_remove {
-                                            let removed_current = idx == self.gui.current_preset;
-                                            self.gui.presets.remove(idx);
-                                            if removed_current {
-                                                let new_index = idx.min(self.gui.presets.len() - 1);
-                                                self.change_sim(
-                                                    device,
-                                                    &rs.queue,
-                                                    self.gui.presets[new_index].clone(),
-                                                    new_index,
-                                                );
-                                                self.gui.current_preset = new_index;
-                                            } else if idx < self.gui.current_preset {
-                                                self.gui.current_preset -= 1;
-                                            }
-                                        }
-
-                                        if close_menu {
-                                            ui.close();
-                                        }
-                                    });
-
-                                // Make button glow if user hasn't williamified once
-                                let button_response = if !self.gui.has_williamified_once {
-                                    // Create a glowing effect by animating the button outline
-                                    let time = ui.input(|i| i.time);
-                                    let pulse = ((time * 2.0).sin() * 0.5 + 0.5) as f32;
-                                    let glow_color = egui::Color32::from_rgb(
-                                        (30.0 + pulse * 100.0) as u8,
-                                        (120.0 + pulse * 135.0) as u8,
-                                        (200.0 + pulse * 55.0) as u8,
+                                    let selected = i == self.gui.current_preset;
+                                    let preset_resp = ui.add_sized(
+                                        [preset_width, ui.spacing().interact_size.y],
+                                        egui::Button::selectable(selected, &preset.inner.name),
                                     );
 
-                                    let button = egui::Button::new("williamify new image")
-                                        .stroke(egui::Stroke::new(1.0, glow_color));
-                                    ui.add(button)
-                                } else {
-                                    ui.button("williamify new image")
-                                };
-
-                                if button_response.clicked() {
-                                    // open file select
-                                    if let Some((ref img, ref settings)) = self.gui.saved_config {
-                                        self.gui.configuring_generation = Some((
-                                            img.clone(),
-                                            settings.clone_with_new_id(),
-                                            GuiImageCache::default(),
-                                        ));
-                                        #[cfg(target_arch = "wasm32")]
-                                        hide_icons();
-                                    } else {
-                                        prompt_image(
-                                            "choose image to williamify",
-                                            self,
-                                            |name: String, mut img: SourceImg, app: &mut WilliamifyApp| {
-                                                img = ensure_reasonable_size(img);
-                                                app.gui.configuring_generation = Some((
-                                                    img,
-                                                    GenerationSettings::default(Uuid::new_v4(), name),
-                                                    GuiImageCache::default(),
-                                                ));
-                                                #[cfg(target_arch = "wasm32")]
-                                                hide_icons();
-                                            },
-                                        );
+                                    if remove_enabled
+                                        && ui
+                                            .small_button("x")
+                                            .on_hover_text("delete preset")
+                                            .clicked()
+                                    {
+                                        to_remove = Some(i);
+                                    } else if preset_resp.clicked() {
+                                        self.change_sim(device, &rs.queue, preset.clone(), i);
+                                        self.gui.animate = true;
+                                        self.gui.current_preset = i;
+                                        close_menu = true;
                                     }
-                                }
-                            });
-                            ui.separator();
+                                });
+                            }
 
-                            if ui
-                                .add(egui::Button::new(egui::RichText::new("✏")))
-                                .on_hover_text("drawing mode")
-                                .clicked()
-                            {
-                                #[cfg(not(target_arch = "wasm32"))]
-                                {
-                                    self.gui.mode = GuiMode::Draw;
-                                    self.init_canvas(device, &rs.queue);
-                                }
-
-                                #[cfg(target_arch = "wasm32")]
-                                {
-                                    web_sys::window()
-                                        .unwrap()
-                                        .alert_with_message(
-                                            "drawing mode not available on the web version :(",
-                                        )
-                                        .ok();
+                            if let Some(idx) = to_remove {
+                                let removed_current = idx == self.gui.current_preset;
+                                self.gui.presets.remove(idx);
+                                if removed_current {
+                                    let new_index = idx.min(self.gui.presets.len() - 1);
+                                    self.change_sim(
+                                        device,
+                                        &rs.queue,
+                                        self.gui.presets[new_index].clone(),
+                                        new_index,
+                                    );
+                                    self.gui.current_preset = new_index;
+                                } else if idx < self.gui.current_preset {
+                                    self.gui.current_preset -= 1;
                                 }
                             }
+
+                            if close_menu {
+                                ui.close();
+                            }
+                        });
+
+                    ui.separator();
+
+                    // williamify button (glows until first use)
+                    let williamify_btn = if !self.gui.has_williamified_once {
+                        let time = ui.input(|i| i.time);
+                        let pulse = ((time * 2.0).sin() * 0.5 + 0.5) as f32;
+                        let glow = egui::Color32::from_rgb(
+                            (30.0 + pulse * 100.0) as u8,
+                            (120.0 + pulse * 135.0) as u8,
+                            (200.0 + pulse * 55.0) as u8,
+                        );
+                        ui.add(
+                            egui::Button::new("williamify!").stroke(egui::Stroke::new(1.0, glow)),
+                        )
+                    } else {
+                        ui.button("williamify!")
+                    };
+
+                    if williamify_btn.clicked() {
+                        if let Some((ref img, ref settings)) = self.gui.saved_config {
+                            self.gui.configuring_generation = Some((
+                                img.clone(),
+                                settings.clone_with_new_id(),
+                                GuiImageCache::default(),
+                            ));
+                            #[cfg(target_arch = "wasm32")]
+                            hide_icons();
+                        } else {
+                            prompt_image(
+                                "choose image to williamify",
+                                self,
+                                |name: String, mut img: SourceImg, app: &mut WilliamifyApp| {
+                                    img = ensure_reasonable_size(img);
+                                    app.gui.configuring_generation = Some((
+                                        img,
+                                        GenerationSettings::default(Uuid::new_v4(), name),
+                                        GuiImageCache::default(),
+                                    ));
+                                    #[cfg(target_arch = "wasm32")]
+                                    hide_icons();
+                                },
+                            );
                         }
                     }
+
+                    // play button pushed to the right
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        #[cfg(not(target_arch = "wasm32"))]
+                        if ui
+                            .button("export preset")
+                            .on_hover_text("save to presets/<name>/ for hardcoding")
+                            .clicked()
+                        {
+                            let preset = &self.gui.presets[self.gui.current_preset];
+                            match export_preset(preset) {
+                                Ok(dir) => {
+                                    opener::open(&dir).ok();
+                                }
+                                Err(e) => self.gui.show_error(e.to_string()),
+                            }
+                        }
+
+                        if ui.button("▶ play").clicked() {
+                            self.gui.animate = true;
+                            self.sim.prepare_play(&mut self.seeds, self.reverse);
+                        }
+                    });
                 },
             );
         });
@@ -901,183 +809,12 @@ impl App for WilliamifyApp {
                             let aspect = self.size.0 as f32 / self.size.1 as f32;
                             let desired = full.x.min(full.y) * egui::vec2(1.0, aspect);
                             ui.add(egui::Image::new((id, desired)).maintain_aspect_ratio(true));
-
-                            #[cfg(not(target_arch = "wasm32"))]
-                            if matches!(self.gui.mode, GuiMode::Draw) {
-                                self.handle_drawing(ctx, device, &rs.queue, ui, aspect);
-                            }
                         } else {
                             ui.colored_label(Color32::LIGHT_RED, "Texture not ready");
                         }
                     },
                 );
             });
-        #[cfg(not(target_arch = "wasm32"))]
-        if matches!(self.gui.mode, GuiMode::Draw) {
-            let number_keys = [
-                egui::Key::Num1,
-                egui::Key::Num2,
-                egui::Key::Num3,
-                egui::Key::Num4,
-                egui::Key::Num5,
-            ];
-
-            // DBECEE,383232, 6B5E57,D49976
-
-            let colors = [
-                ("black", 0x000000),
-                ("a", 0x86d9e3),
-                ("b", 0x383232),
-                ("c", 0xD49976),
-                ("d", 0x793025),
-            ];
-
-            for (idx, (_name, color)) in colors.iter().enumerate() {
-                if ctx.input(|i| i.key_pressed(number_keys[idx])) {
-                    let hex = *color;
-                    let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
-                    let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
-                    let b = (hex & 0xFF) as f32 / 255.0;
-                    let a = 0.5;
-
-                    self.gui.drawing_color = [r, g, b, a];
-                }
-            }
-            // show selected drawing color
-            egui::Area::new("drawing_color".into())
-                .anchor(egui::Align2::LEFT_TOP, egui::vec2(10.0, 30.0))
-                .show(ctx, |ui| {
-                    let rect_size = 30.0;
-                    let (rect, _resp) = ui.allocate_exact_size(
-                        egui::vec2(rect_size, rect_size),
-                        egui::Sense::hover(),
-                    );
-                    let color = egui::Color32::from_rgba_unmultiplied(
-                        (self.gui.drawing_color[0] * 255.0) as u8,
-                        (self.gui.drawing_color[1] * 255.0) as u8,
-                        (self.gui.drawing_color[2] * 255.0) as u8,
-                        255,
-                    );
-                    ui.painter().rect_filled(rect, 15.0, color);
-                    if ui.is_rect_visible(rect) {
-                        ui.painter().rect_stroke(
-                            rect,
-                            15.0,
-                            (2.0, egui::Color32::WHITE),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-
-                    // Keep the picker visible while hovering either the main swatch or the picker area.
-                    let spacing = 10.0;
-                    let btn_size = rect_size / 2.0;
-                    let gap = 4.0;
-
-                    // Layout picker row next to the swatch, vertically centered.
-                    let n_buttons = colors.len() as f32;
-                    let picker_width = n_buttons * btn_size + (n_buttons - 1.0).max(0.0) * gap;
-                    let picker_min =
-                        rect.min + egui::vec2(rect_size + spacing, (rect_size - btn_size) * 0.5);
-                    let picker_rect = egui::Rect::from_min_size(
-                        rect.min,
-                        egui::vec2(picker_width + rect_size + spacing, rect_size),
-                    );
-
-                    // Decide visibility purely from pointer position to avoid z-order flicker.
-                    let pointer_pos = ctx.input(|i| i.pointer.hover_pos());
-                    let show_picker = ui.is_rect_visible(rect)
-                        && pointer_pos.is_some_and(|p| rect.contains(p) || picker_rect.contains(p));
-
-                    // Global visibility animation driver
-                    let base_t = ui
-                        .ctx()
-                        .animate_bool(egui::Id::new("color_picker_visible"), show_picker);
-
-                    // Helpers
-                    let saturate = |x: f32| x.clamp(0.0, 1.0);
-                    let smoothstep = |x: f32| {
-                        let x = saturate(x);
-                        x * x * (3.0 - 2.0 * x)
-                    };
-
-                    // Start position = centered under the main swatch so buttons "emerge" from it
-                    let start_pos = egui::pos2(
-                        rect.min.x + (rect_size - btn_size) * 0.5,
-                        rect.min.y + (rect_size - btn_size) * 0.5,
-                    );
-
-                    // Per-button stagger
-                    let per_btn_delay = 0.08_f32;
-                    // Ensure the last button still reaches t=1 when base_t=1
-                    let total_stagger = (n_buttons - 1.0).max(0.0) * per_btn_delay;
-                    let denom = (1.0 - total_stagger).max(1e-6);
-
-                    for (idx, (_name, hex)) in colors.iter().enumerate() {
-                        let rgba = {
-                            let r = ((hex >> 16) & 0xFF) as f32 / 255.0;
-                            let g = ((hex >> 8) & 0xFF) as f32 / 255.0;
-                            let b = (hex & 0xFF) as f32 / 255.0;
-                            let a = DRAWING_ALPHA;
-                            [r, g, b, a]
-                        };
-                        let i = idx as f32;
-
-                        // Staggered progress for each button; normalized so the last also reaches 1.0
-                        let raw = (base_t - per_btn_delay * i) / denom;
-                        let t_i = smoothstep(raw);
-
-                        // Only draw while animating or visible to avoid early reveal
-                        if t_i <= 0.001 {
-                            continue;
-                        }
-
-                        // Target position to the right of the swatch
-                        let end_pos = egui::pos2(picker_min.x + i * (btn_size + gap), picker_min.y);
-
-                        // Interpolate from under the swatch to the target
-                        let pos = egui::pos2(
-                            egui::lerp(start_pos.x..=end_pos.x, t_i),
-                            egui::lerp(start_pos.y..=end_pos.y, t_i),
-                        );
-
-                        egui::Area::new(egui::Id::new(format!("color_picker_btn_{idx}")))
-                            .fixed_pos(pos)
-                            .show(ctx, |ui| {
-                                let (btn_rect, btn_resp) = ui.allocate_exact_size(
-                                    egui::vec2(btn_size, btn_size),
-                                    egui::Sense::click(),
-                                );
-
-                                // Fade with the slide
-                                let a = (255.0 * t_i) as u8;
-                                let color32 = egui::Color32::from_rgba_unmultiplied(
-                                    (rgba[0] * 255.0) as u8,
-                                    (rgba[1] * 255.0) as u8,
-                                    (rgba[2] * 255.0) as u8,
-                                    a,
-                                );
-
-                                ui.painter().rect_filled(btn_rect, 15.0 / 2.0, color32);
-                                if ui.is_rect_visible(btn_rect) {
-                                    ui.painter().rect_stroke(
-                                        btn_rect,
-                                        15.0 / 2.0,
-                                        (
-                                            2.0,
-                                            egui::Color32::from_rgba_unmultiplied(255, 255, 255, a),
-                                        ),
-                                        egui::StrokeKind::Inside,
-                                    );
-                                }
-
-                                if btn_resp.clicked() {
-                                    self.gui.drawing_color = rgba;
-                                }
-                            });
-                    }
-                });
-        }
-
         // continuous repaint for animation
         ctx.request_repaint();
         self.frame_count += 1;

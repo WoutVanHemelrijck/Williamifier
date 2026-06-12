@@ -383,6 +383,22 @@ impl App for WilliamifyApp {
                             //     }
                             // }
                             ui.horizontal_wrapped(|ui| {
+                                #[cfg(not(target_arch = "wasm32"))]
+                                if ui
+                                    .button("export preset")
+                                    .on_hover_text(
+                                        "save current preset to presets/<name>/ for hardcoding",
+                                    )
+                                    .clicked()
+                                {
+                                    let preset = &self.gui.presets[self.gui.current_preset];
+                                    match export_preset(preset) {
+                                        Ok(dir) => {
+                                            opener::open(&dir).ok();
+                                        }
+                                        Err(e) => self.gui.show_error(e.to_string()),
+                                    }
+                                }
                                 ui.label("choose preset:");
                                 egui::ComboBox::from_label("")
                                     .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
@@ -1319,6 +1335,33 @@ fn image_crop_gui(
     });
 
     open_file_dialog
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn export_preset(preset: &Preset) -> Result<String, Box<dyn std::error::Error>> {
+    let dir = format!("presets/{}", preset.inner.name);
+    std::fs::create_dir_all(&dir)?;
+
+    let img = image::RgbImage::from_raw(
+        preset.inner.width,
+        preset.inner.height,
+        preset.inner.source_img.clone(),
+    )
+    .ok_or("invalid image dimensions")?;
+    img.save(format!("{dir}/source.png"))?;
+
+    let json = format!(
+        "[{}]",
+        preset
+            .assignments
+            .iter()
+            .map(|x| x.to_string())
+            .collect::<Vec<_>>()
+            .join(",")
+    );
+    std::fs::write(format!("{dir}/assignments.json"), json)?;
+
+    Ok(dir)
 }
 
 fn get_default_preset_name(mut n: String) -> String {

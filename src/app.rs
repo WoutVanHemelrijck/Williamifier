@@ -1813,4 +1813,4 @@ macro_rules! include_presets {
     };
 }
 
-include_presets! { "Cat", "Checkboard", "Kitten", "Wout" }
+include_presets! { "cat", "Checkboard", "Kitten", "Wout" }

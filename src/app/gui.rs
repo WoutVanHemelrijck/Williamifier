@@ -31,6 +31,7 @@ use uuid::Uuid;
 #[derive(Default)]
 struct GuiImageCache {
     source_preview: Option<egui::TextureHandle>,
+    william_preview: Option<egui::TextureHandle>,
 }
 
 pub(crate) struct GuiState {
@@ -502,6 +503,7 @@ impl App for WilliamifyApp {
                                     source_img,
                                     &mut settings.source_crop_scale,
                                     &mut cache.source_preview,
+                                    &mut cache.william_preview,
                                     Some(&william),
                                 );
                             }
@@ -517,6 +519,7 @@ impl App for WilliamifyApp {
                                         {
                                             *src = img;
                                             cache.source_preview = None;
+                                            cache.william_preview = None;
                                         }
                                     },
                                 );
@@ -935,12 +938,14 @@ fn image_crop_gui(
     ui: &mut egui::Ui,
     img: &SourceImg,
     crop_scale: &mut CropScale,
-    cache: &mut Option<TextureHandle>,
+    source_cache: &mut Option<TextureHandle>,
+    william_cache: &mut Option<TextureHandle>,
     overlay: Option<&SourceImg>,
 ) -> bool {
     let mut open_file_dialog = false;
     ui.vertical(|ui| {
-        let tex = match &cache {
+        // Build both preview textures when cache is stale
+        let source_tex = match &source_cache {
             None => {
                 let cropped = crop_scale.apply(img, 128);
                 let preview = if let Some(ov) = overlay {
@@ -953,12 +958,33 @@ fn image_crop_gui(
                     egui::ColorImage::from_rgb([128, 128], preview.as_raw()),
                     egui::TextureOptions::LINEAR,
                 );
-                *cache = Some(p.clone());
+                *source_cache = Some(p.clone());
                 p
             }
             Some(t) => t.clone(),
         };
-        ui.add(egui::Image::from_texture(&tex));
+        let william_tex = overlay.map(|ov| match &william_cache {
+            None => {
+                let cropped = crop_scale.apply(img, 128);
+                let preview = blend_images(ov, &cropped, 0.45);
+                let p = ui.ctx().load_texture(
+                    &format!("{name}_william"),
+                    egui::ColorImage::from_rgb([128, 128], preview.as_raw()),
+                    egui::TextureOptions::LINEAR,
+                );
+                *william_cache = Some(p.clone());
+                p
+            }
+            Some(t) => t.clone(),
+        });
+
+        // Show previews side by side
+        ui.horizontal(|ui| {
+            ui.add(egui::Image::from_texture(&source_tex));
+            if let Some(wt) = william_tex {
+                ui.add(egui::Image::from_texture(&wt));
+            }
+        });
         if ui.button("change image").clicked() {
             open_file_dialog = true;
         }
@@ -993,7 +1019,8 @@ fn image_crop_gui(
             );
 
             if values != *crop_scale {
-                *cache = None; // force reload
+                *source_cache = None;
+                *william_cache = None;
             }
         });
     });

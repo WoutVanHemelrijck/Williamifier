@@ -492,12 +492,17 @@ impl App for WilliamifyApp {
                             if let Some((source_img, settings, cache)) =
                                 self.gui.configuring_generation.as_mut()
                             {
+                                let william = {
+                                    let raw = settings.get_raw_target();
+                                    settings.target_crop_scale.apply(&raw, 128)
+                                };
                                 change_source = image_crop_gui(
                                     "source",
                                     ui,
                                     source_img,
                                     &mut settings.source_crop_scale,
                                     &mut cache.source_preview,
+                                    Some(&william),
                                 );
                             }
 
@@ -902,20 +907,50 @@ fn ensure_reasonable_size(img: SourceImg) -> SourceImg {
     image::imageops::resize(&img, new_w, new_h, image::imageops::FilterType::Lanczos3)
 }
 
+fn blend_images(base: &SourceImg, overlay: &SourceImg, overlay_alpha: f32) -> SourceImg {
+    let (w, h) = base.dimensions();
+    let a = overlay_alpha.clamp(0.0, 1.0);
+    let ia = 1.0 - a;
+    let mut out = SourceImg::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            let s = base.get_pixel(x, y);
+            let t = overlay.get_pixel(x, y);
+            out.put_pixel(
+                x,
+                y,
+                image::Rgb([
+                    (s[0] as f32 * ia + t[0] as f32 * a).round() as u8,
+                    (s[1] as f32 * ia + t[1] as f32 * a).round() as u8,
+                    (s[2] as f32 * ia + t[2] as f32 * a).round() as u8,
+                ]),
+            );
+        }
+    }
+    out
+}
+
 fn image_crop_gui(
     name: &'static str,
     ui: &mut egui::Ui,
     img: &SourceImg,
     crop_scale: &mut CropScale,
     cache: &mut Option<TextureHandle>,
+    overlay: Option<&SourceImg>,
 ) -> bool {
     let mut open_file_dialog = false;
     ui.vertical(|ui| {
         let tex = match &cache {
             None => {
+                let cropped = crop_scale.apply(img, 128);
+                let preview = if let Some(ov) = overlay {
+                    blend_images(&cropped, ov, 0.45)
+                } else {
+                    cropped
+                };
                 let p = ui.ctx().load_texture(
                     name,
-                    egui::ColorImage::from_rgb([128, 128], crop_scale.apply(img, 128).as_raw()),
+                    egui::ColorImage::from_rgb([128, 128], preview.as_raw()),
                     egui::TextureOptions::LINEAR,
                 );
                 *cache = Some(p.clone());
@@ -934,7 +969,7 @@ fn image_crop_gui(
 
             ui.add_sized(
                 [slider_w, 20.0],
-                egui::Slider::new(&mut crop_scale.scale, 1.0..=5.0)
+                egui::Slider::new(&mut crop_scale.scale, 0.2..=5.0)
                     .show_value(false)
                     .text("zoom"),
             );
@@ -949,6 +984,12 @@ fn image_crop_gui(
                 egui::Slider::new(&mut crop_scale.y, -1.0..=1.0)
                     .show_value(false)
                     .text("y-off."),
+            );
+            ui.add_sized(
+                [slider_w, 20.0],
+                egui::Slider::new(&mut crop_scale.rotation, -180.0..=180.0)
+                    .show_value(false)
+                    .text("rotate"),
             );
 
             if values != *crop_scale {

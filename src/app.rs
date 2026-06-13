@@ -283,14 +283,10 @@ impl WilliamifyApp {
             false
         };
 
-        #[cfg(target_arch = "wasm32")]
-        let random_preset = (js_sys::Math::random() * (presets.len() as f64)) as usize;
-
-        #[cfg(not(target_arch = "wasm32"))]
-        let random_preset = frand::Rand::with_seed(
-            std::time::SystemTime::now().elapsed().unwrap().as_nanos() as u64,
-        )
-        .gen_range(0..presets.len() as u64) as usize;
+        let random_preset = presets
+            .iter()
+            .position(|p| p.inner.name == "Kitten")
+            .unwrap_or(0);
 
         let (seed_count, seeds, colors, sim) =
             morph_sim::init_image(size.0, presets[random_preset].clone());

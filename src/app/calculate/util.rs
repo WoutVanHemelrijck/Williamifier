@@ -1,6 +1,5 @@
 use crate::app::calculate::ProgressMsg;
 
-use image::imageops;
 use serde::Deserialize;
 use serde::Serialize;
 use uuid::Uuid;
@@ -71,11 +70,17 @@ pub(crate) fn get_images(
     Ok((source_pixels, target_pixels, weights))
 }
 
+fn default_rotation() -> f32 {
+    0.0
+}
+
 #[derive(Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct CropScale {
-    pub x: f32,     // -1: all left, 0: center, 1: all right
-    pub y: f32,     // -1: all top, 0: center, 1: all bottom
-    pub scale: f32, // 1: fit within frame, >1: zoom in, <1: not allowed
+    pub x: f32,     // -1..1: pan left/right
+    pub y: f32,     // -1..1: pan up/down
+    pub scale: f32, // >1: zoom in, <1: zoom out (image smaller than frame, gaps filled)
+    #[serde(default = "default_rotation")]
+    pub rotation: f32, // degrees, CCW
 }
 
 impl CropScale {
@@ -84,35 +89,104 @@ impl CropScale {
             x: 0.0,
             y: 0.0,
             scale: 1.0,
+            rotation: 0.0,
         }
     }
 
     pub fn apply(&self, img: &SourceImg, sidelen: u32) -> SourceImg {
         let (w, h) = img.dimensions();
-
-        let s = self.scale.max(1.0);
-
         let base_side = w.min(h) as f32;
-        let mut crop_side = (base_side / s).floor().max(1.0);
 
-        crop_side = crop_side.min(w as f32).min(h as f32);
+        let avg = {
+            let n = (w * h) as u64;
+            let (r, g, b) = img.pixels().fold((0u64, 0u64, 0u64), |(r, g, b), p| {
+                (r + p[0] as u64, g + p[1] as u64, b + p[2] as u64)
+            });
+            image::Rgb([(r / n) as u8, (g / n) as u8, (b / n) as u8])
+        };
 
-        let max_x_off = (w as f32 - crop_side).max(0.0);
-        let max_y_off = (h as f32 - crop_side).max(0.0);
+        let effective_scale = self.scale.max(0.05);
+        // source pixels per output pixel
+        let pix_per_out = base_side / (effective_scale * sidelen as f32);
 
         let xn = (self.x.clamp(-1.0, 1.0) + 1.0) * 0.5;
         let yn = (self.y.clamp(-1.0, 1.0) + 1.0) * 0.5;
 
-        let x0 = (xn * max_x_off).floor() as u32;
-        let y0 = (yn * max_y_off).floor() as u32;
-        let cs = crop_side as u32;
-        let cropped = imageops::crop_imm(img, x0, y0, cs, cs).to_image();
-
-        if cs == sidelen {
-            cropped
+        // Center of the source region we want to display, and where in the output it sits
+        let (center_out_x, center_out_y, src_cx, src_cy) = if effective_scale >= 1.0 {
+            // Zoom in: pan within source
+            let crop_side = base_side / effective_scale;
+            let max_x = (w as f32 - crop_side).max(0.0);
+            let max_y = (h as f32 - crop_side).max(0.0);
+            let x0 = (xn * max_x).floor();
+            let y0 = (yn * max_y).floor();
+            (
+                sidelen as f32 / 2.0,
+                sidelen as f32 / 2.0,
+                x0 + crop_side / 2.0,
+                y0 + crop_side / 2.0,
+            )
         } else {
-            imageops::resize(&cropped, sidelen, sidelen, imageops::FilterType::Lanczos3)
+            // Zoom out: image is smaller than output; pan its placement
+            let max_pan = sidelen as f32 * (1.0 - effective_scale) / 2.0;
+            let out_cx = sidelen as f32 / 2.0 + self.x.clamp(-1.0, 1.0) * max_pan;
+            let out_cy = sidelen as f32 / 2.0 + self.y.clamp(-1.0, 1.0) * max_pan;
+            (out_cx, out_cy, w as f32 / 2.0, h as f32 / 2.0)
+        };
+
+        let theta = self.rotation.to_radians();
+        let cos_t = theta.cos();
+        let sin_t = theta.sin();
+
+        let mut out = SourceImg::new(sidelen, sidelen);
+
+        for oy in 0..sidelen {
+            for ox in 0..sidelen {
+                // Vector from image center in output space
+                let cx = ox as f32 + 0.5 - center_out_x;
+                let cy = oy as f32 + 0.5 - center_out_y;
+
+                // Inverse-rotate to align with (unrotated) source axes
+                let rx = cx * cos_t + cy * sin_t;
+                let ry = -cx * sin_t + cy * cos_t;
+
+                // Map to source pixel coordinates
+                let sx = rx * pix_per_out + src_cx;
+                let sy = ry * pix_per_out + src_cy;
+
+                let pixel = if sx >= 0.0 && sy >= 0.0 && sx < w as f32 && sy < h as f32 {
+                    // Bilinear interpolation
+                    let x0 = sx.floor() as u32;
+                    let y0 = sy.floor() as u32;
+                    let x1 = (x0 + 1).min(w - 1);
+                    let y1 = (y0 + 1).min(h - 1);
+                    let fx = sx - sx.floor();
+                    let fy = sy - sy.floor();
+                    let p00 = img.get_pixel(x0, y0);
+                    let p10 = img.get_pixel(x1, y0);
+                    let p01 = img.get_pixel(x0, y1);
+                    let p11 = img.get_pixel(x1, y1);
+                    let lerp = |a: u8, b: u8, c: u8, d: u8| {
+                        (a as f32 * (1.0 - fx) * (1.0 - fy)
+                            + b as f32 * fx * (1.0 - fy)
+                            + c as f32 * (1.0 - fx) * fy
+                            + d as f32 * fx * fy)
+                            .round() as u8
+                    };
+                    image::Rgb([
+                        lerp(p00[0], p10[0], p01[0], p11[0]),
+                        lerp(p00[1], p10[1], p01[1], p11[1]),
+                        lerp(p00[2], p10[2], p01[2], p11[2]),
+                    ])
+                } else {
+                    avg
+                };
+
+                out.put_pixel(ox, oy, pixel);
+            }
         }
+
+        out
     }
 }
 

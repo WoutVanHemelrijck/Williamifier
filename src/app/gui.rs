@@ -1164,226 +1164,290 @@ fn export_preset(preset: &Preset) -> Result<String, Box<dyn std::error::Error>> 
     Ok(dir)
 }
 
+
+// ── "How it works" helpers ────────────────────────────────────────────────────
+
+/// Draws one collapsible section: border-top, clickable header (title left, › right),
+/// and body content when open. Matches the HTML <details class="tech-section"> structure.
 fn tech_section(
     ui: &mut egui::Ui,
     title: &str,
     default_open: bool,
+    is_last: bool,
     content: impl FnOnce(&mut egui::Ui),
 ) {
-    ui.add(egui::Separator::default().spacing(0.0));
-    egui::CollapsingHeader::new(
-        egui::RichText::new(title.to_uppercase())
-            .size(12.0)
-            .strong()
-            .color(C_TEXT),
-    )
-    .default_open(default_open)
-    .show(ui, |ui| {
-        ui.add_space(6.0);
+    let id = egui::Id::new(("hiw_section", title));
+    let open = ui.data(|d| d.get_temp::<bool>(id).unwrap_or(default_open));
+
+    // border-top: 1px solid var(--border)
+    let top_y = ui.cursor().top();
+    let x_range = ui.clip_rect().x_range();
+    ui.painter().hline(x_range, top_y, egui::Stroke::new(1.0, c_border()));
+
+    // Clickable header row — padding: 16px 0
+    let full_w = ui.available_width();
+    let (header_rect, header_resp) = ui.allocate_exact_size(
+        egui::vec2(full_w, 52.0),   // 16 + ~20 text + 16
+        egui::Sense::click(),
+    );
+
+    if ui.is_rect_visible(header_rect) {
+        let painter = ui.painter();
+        let text_color = if header_resp.hovered() { Color32::WHITE } else { C_TEXT };
+
+        // Section label — 12px, 600, uppercase, letter-spacing approximated
+        painter.text(
+            egui::pos2(header_rect.left(), header_rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            title.to_uppercase(),
+            egui::FontId::new(12.0, egui::FontFamily::Proportional),
+            text_color,
+        );
+
+        let chevron_str = "›";
+        let glyph_color = C_TEXT_MUTED;
+        painter.text(
+            egui::pos2(header_rect.right(), header_rect.center().y),
+            egui::Align2::RIGHT_CENTER,
+            chevron_str,
+            egui::FontId::new(18.0, egui::FontFamily::Proportional),
+            if open { C_TEXT } else { glyph_color },
+        );
+    }
+
+    if header_resp.clicked() {
+        ui.data_mut(|d| d.insert_temp(id, !open));
+    }
+
+    if open {
         content(ui);
-        ui.add_space(32.0);
-    });
+        ui.add_space(32.0); // padding-bottom: 32px
+    }
+
+    // Last section gets border-bottom too
+    if is_last {
+        let bot_y = ui.cursor().top();
+        let x_range = ui.clip_rect().x_range();
+        ui.painter().hline(x_range, bot_y, egui::Stroke::new(1.0, c_border()));
+        ui.add_space(1.0); // ensure the line is visible
+    }
 }
 
-fn tech_body(ui: &mut egui::Ui, text: &str) {
-    ui.label(egui::RichText::new(text).size(14.0).color(C_TEXT).line_height(Some(14.0 * 1.8)));
-    ui.add_space(6.0);
+/// Body paragraph: 14px, line-height 1.8, --text color, max-width 600px.
+fn tech_p(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(0.0);
+    ui.set_max_width(600.0);
+    ui.label(
+        egui::RichText::new(text)
+            .size(14.0)
+            .color(C_TEXT)
+            .line_height(Some(14.0 * 1.8)),
+    );
+    ui.add_space(16.0);
 }
 
-fn tech_table(ui: &mut egui::Ui, lines: &[&str]) {
-    ui.add_space(6.0);
-    egui::Frame::new()
-        .fill(C_SURFACE)
-        .corner_radius(8.0)
-        .stroke(egui::Stroke::new(1.0, c_border()))
-        .inner_margin(egui::Margin::symmetric(18, 14))
-        .show(ui, |ui| {
-            for &line in lines {
-                ui.label(
-                    egui::RichText::new(line)
-                        .monospace()
-                        .size(11.5)
-                        .color(C_TEXT)
-                        .line_height(Some(11.5 * 1.7)),
-                );
-            }
-        });
-    ui.add_space(10.0);
-}
-
-fn tech_example(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(4.0);
-    egui::Frame::new()
-        .fill(C_SURFACE)
-        .corner_radius(6.0)
-        .stroke(egui::Stroke::new(1.0, c_border()))
-        .inner_margin(egui::Margin::symmetric(14, 10))
-        .show(ui, |ui| {
-            ui.label(
-                egui::RichText::new("example")
-                    .size(11.0)
-                    .strong()
-                    .color(C_TEXT_MUTED)
-                    .monospace(),
-            );
-            ui.add_space(4.0);
-            ui.label(egui::RichText::new(text).size(13.0).color(C_TEXT).line_height(Some(13.0 * 1.7)));
-        });
-    ui.add_space(8.0);
+/// Monospace block: matches .tech-table (SF Mono / Fira Code style, surface bg, border, 8px radius).
+fn tech_table(ui: &mut egui::Ui, content: &str) {
+    ui.add_space(14.0);
+    let full_w = ui.available_width().min(860.0);
+    ui.allocate_ui_with_layout(
+        egui::vec2(full_w, 0.0),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            egui::Frame::new()
+                .fill(C_SURFACE)
+                .corner_radius(egui::CornerRadius::same(8))
+                .stroke(egui::Stroke::new(1.0, c_border()))
+                .inner_margin(egui::Margin { left: 18, right: 18, top: 14, bottom: 14 })
+                .show(ui, |ui| {
+                    ui.label(
+                        egui::RichText::new(content)
+                            .monospace()
+                            .size(11.5)
+                            .color(C_TEXT)
+                            .line_height(Some(11.5 * 1.7)),
+                    );
+                });
+        },
+    );
+    ui.add_space(14.0);
 }
 
 fn how_it_works_content(ui: &mut egui::Ui) {
-    let content_width = ui.available_width().min(860.0);
+    // .tech-content: max-width 860px, margin: 0 auto, padding: 48px 40px 80px
+    let outer_w = ui.available_width();
+    let content_w = outer_w.min(860.0);
+    let h_pad = ((outer_w - content_w) / 2.0).max(40.0);
+
+    ui.add_space(48.0);
 
     ui.allocate_ui_with_layout(
-        egui::vec2(ui.available_width(), 0.0),
+        egui::vec2(outer_w, 0.0),
         egui::Layout::top_down(egui::Align::Center),
         |ui| {
-            ui.set_max_width(content_width);
-            let pad = 40.0_f32.min(content_width * 0.05);
-            ui.add_space(48.0);
+            ui.set_max_width(content_w - h_pad * 2.0);
 
-            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
-                ui.add_space(pad);
+            // h1
+            ui.label(
+                egui::RichText::new("How it works")
+                    .size(22.0)
+                    .strong()
+                    .color(C_TEXT),
+            );
+            ui.add_space(10.0);
 
-                ui.label(
-                    egui::RichText::new("How it works")
-                        .size(22.0)
-                        .strong()
-                        .color(C_TEXT),
-                );
-                ui.add_space(10.0);
-                ui.label(
-                    egui::RichText::new(
-                        "The Williamifier transforms any image into William's face by moving                          each pixel to a matching position. Three phases: (1) finding the                          best pixel-to-pixel assignment offline, (2) simulating each pixel                          flying to its destination, and (3) rendering the current positions                          as a Voronoi mosaic on the GPU.",
-                    )
-                    .size(14.0)
-                    .color(C_TEXT_MUTED)
-                    .line_height(Some(14.0 * 1.75)),
-                );
-                ui.add_space(36.0);
+            // .tech-intro: 14px, 1.75, --text-muted, max-width 600px, margin-bottom 36px
+            ui.set_max_width(600.0);
+            ui.label(
+                egui::RichText::new(
+                    "A walkthrough of the math and algorithms behind the Williamifier. \
+                     Each pixel in your image is matched to a position in William's face, \
+                     then physically simulated flying to its destination, \
+                     and rendered each frame as a Voronoi mosaic on the GPU.",
+                )
+                .size(14.0)
+                .color(C_TEXT_MUTED)
+                .line_height(Some(14.0 * 1.75)),
+            );
+            ui.add_space(36.0);
 
-                tech_section(ui, "Phase 1 — Pixel Assignment", true, |ui| {
-                    tech_body(
-                        ui,
-                        "Before the animation runs, every pixel in your image must be matched                          to exactly one position in William's face — a one-to-one bijection.                          Both images are resampled to an N × N grid (default N = 128).",
-                    );
-                    ui.label(egui::RichText::new("Cost function").size(13.0).strong().color(C_TEXT));
-                    ui.add_space(6.0);
-                    tech_body(
-                        ui,
-                        "For source pixel s at (xs, ys) with colour (rs, gs, bs) and target t at (xt, yt) with colour (rt, gt, bt):",
-                    );
-                    tech_table(ui, &[
-                        "cost(s, t)  =  Dc2(s,t) * w(t)  +  ( Dp2(s,t) * L )^2",
-                        "",
-                        "Dc2(s,t)  =  (rs - rt)^2 + (gs - gt)^2 + (bs - bt)^2   <- colour distance^2",
-                        "Dp2(s,t)  =  (xs - xt)^2 + (ys - yt)^2                 <- spatial distance^2",
-                        "",
-                        "w(t)  -- importance weight for target pixel t  (from William's face)",
-                        "L     -- proximity slider  (0 = colour only,  large = stay nearby)",
-                    ]);
-                    tech_example(
-                        ui,
-                        "Two pixels with colour error Dc2 = 100.\n                         A: Dp2 = 25  (5 units away)    cost = 100 + (25*5)^2  =  15 725\n                         B: Dp2 = 1600 (40 units away)  cost = 100 + (1600*5)^2 = 64 000 100\n                         Increasing L strongly penalises long-distance moves.",
-                    );
-                    ui.label(egui::RichText::new("Fast algorithm (genetic)").size(13.0).strong().color(C_TEXT));
-                    ui.add_space(6.0);
-                    tech_body(ui, "Pick random pair (a, b) within radius r, swap if it lowers total cost:");
-                    tech_table(ui, &[
-                        "swap(a,b)  if  cost(pa,tb) + cost(pb,ta)  <  cost(pa,ta) + cost(pb,tb)",
-                        "r  <-  max( r * 0.99,  2 )   after each generation",
-                    ]);
-                    ui.label(egui::RichText::new("Optimal algorithm (Hungarian / Kuhn-Munkres)").size(13.0).strong().color(C_TEXT));
-                    ui.add_space(6.0);
-                    tech_body(ui, "Finds globally optimal assignment. Maintains labelling (lx, ly) satisfying:");
-                    tech_table(ui, &[
-                        "lx(i) + ly(j)  >=  cost(i, j)   for all (i, j)",
-                        "",
-                        "Augments a matching along zero-slack edges until a perfect",
-                        "matching is found -- that matching is provably optimal.",
-                    ]);
-                });
+            // Restore full content width for sections
+            ui.set_max_width(content_w - h_pad * 2.0);
 
-                tech_section(ui, "Phase 2 — Physics Simulation", true, |ui| {
-                    tech_body(ui, "Each particle has position p, velocity v, acceleration a. Every frame:");
-                    tech_table(ui, &[
-                        "v  <-  ( v + a ) * 0.97       <- integrate & damp",
-                        "p  <-  p + clamp(v, -6, 6)    <- move  (max 6 px/frame)",
-                        "age  <-  age + 1",
-                    ]);
-                    ui.label(egui::RichText::new("Force 1 — Destination pull").size(13.0).strong().color(C_TEXT));
-                    ui.add_space(6.0);
-                    tech_body(ui, "Cubic ramp-up pulls each particle toward its target p_dst:");
-                    tech_table(ui, &[
-                        "elapsed  =  age / 60                      <- seconds at 60 fps",
-                        "factor   =  min( (elapsed * k)^3,  1000 )",
-                        "dist     =  ||p_dst - p||",
-                        "",
-                        "a  +=  (p_dst - p) * dist * factor / L",
-                        "",
-                        "k = 0.13  (preset animations),   L = canvas side length",
-                    ]);
-                    ui.label(egui::RichText::new("Force 2 — Neighbour repulsion").size(13.0).strong().color(C_TEXT));
-                    ui.add_space(6.0);
-                    tech_body(ui, "Particles repel within personal space s = 0.95 * pixel_size:");
-                    tech_table(ui, &[
-                        "d   =  ||pj - pi||",
-                        "w   =  (s - d) / (s * d)         <- weight -> inf as d -> 0",
-                        "",
-                        "ai  -=  (pj - pi) * w",
-                    ]);
-                    ui.label(egui::RichText::new("Force 3 — Wall repulsion").size(13.0).strong().color(C_TEXT));
-                    ui.add_space(6.0);
-                    tech_table(ui, &[
-                        "sw = s / 2",
-                        "if  px < sw :       ax  +=  (sw - px) / sw",
-                        "if  px > L - sw :   ax  -=  (px - (L - sw)) / sw   (same for py/ay)",
-                    ]);
-                    ui.label(egui::RichText::new("Force 4 — Velocity alignment").size(13.0).strong().color(C_TEXT));
-                    ui.add_space(6.0);
-                    tech_table(ui, &[
-                        "v_avg  =  ( Sum vj * wj ) / ( Sum wj )      <- over all neighbours j",
-                        "a  +=  ( v_avg - v ) * 0.8",
-                    ]);
-                    tech_example(
-                        ui,
-                        "3 neighbours with velocities (3,0), (1,2), (-1,1) and equal weights:\n                         v_avg = ( (3+1-1)/3, (0+2+1)/3 ) = (1, 1)\n                         Current v = (0, 0)  ->  a += (1,1)*0.8 = (0.8, 0.8)",
-                    );
-                });
+            // ── Section 1 ────────────────────────────────────────────────────
+            tech_section(ui, "Phase 1 — Pixel Assignment", true, false, |ui| {
+                tech_p(ui,
+                    "Before the animation can run, every pixel in your image must be matched \
+                     to exactly one position in William's face — a one-to-one bijection. \
+                     Both images are resampled to an N × N grid (default N = 128). \
+                     We then search for the assignment that minimises a total cost.");
 
-                tech_section(ui, "Phase 3 — Voronoi Rendering (JFA)", true, |ui| {
-                    tech_body(
-                        ui,
-                        "Every frame the GPU colours each pixel with the colour of its nearest                          particle. Naive search costs O(N^2 * S). The Jump Flood Algorithm (JFA)                          does it in O(N^2 log N) with ceil(log2 N) passes.",
-                    );
-                    tech_body(ui, "1. Clear  -- every pixel set to sentinel ID = 0xFFFFFFFF.");
-                    tech_body(ui, "2. Seed splat -- seed i at (xi, yi) writes its index to the nearest integer pixel.");
-                    tech_body(ui, "3. JFA passes -- k starts at 2^floor(log2(max_dim)) and halves each pass:");
-                    tech_table(ui, &[
-                        "for each pass with step k:",
-                        "  for each pixel p = (px, py):",
-                        "    for each d in { (+-k,0), (0,+-k), (+-k,+-k) }:",
-                        "      q  =  p + d",
-                        "      if q has seed j at (xj, yj):",
-                        "        d2  =  (px - xj)^2 + (py - yj)^2",
-                        "        if d2 < d2_best:  best <- j,  d2_best <- d2",
-                        "    write best to pixel p",
-                    ]);
-                    tech_body(ui, "4. Shade -- each pixel reads the colour of its assigned seed.");
-                    tech_body(ui, "For a 1024 x 1024 canvas this is 10 passes.");
-                    tech_example(
-                        ui,
-                        "8x8 grid, seeds A=(1,1) and B=(6,5). First pass k=4.\n                         Pixel p=(5,2): A -> d2=(5-1)^2+(2-1)^2=17,  B -> d2=(5-6)^2+(2-5)^2=10  -> best=B.\n                         After k=2 and k=1 passes, every pixel knows its nearest seed.",
-                    );
-                });
+                tech_p(ui,
+                    "For source pixel s at position (xs, ys) with colour (rs, gs, bs) \
+                     assigned to target pixel t at (xt, yt) with colour (rt, gt, bt), the cost is:");
 
-                ui.add_space(pad);
+                tech_table(ui,
+"cost(s, t)  =  Dc²(s,t) · w(t)  +  ( Dp²(s,t) · λ )²
+
+Dc²(s,t)  =  (rs − rt)² + (gs − gt)² + (bs − bt)²   ← colour distance²
+Dp²(s,t)  =  (xs − xt)² + (ys − yt)²                ← spatial distance²
+
+w(t)  — importance weight for target pixel t  (from William's face)
+λ     — proximity slider  (0 = colour only,  large = stay nearby)");
+
+                tech_p(ui,
+                    "The weight map w(t) is higher near William's prominent features (eyes, \
+                     nose) so those regions are matched more precisely. Increasing λ penalises \
+                     long-distance moves, keeping matched pixels spatially close.");
+
+                tech_p(ui, "Two algorithms are available:");
+
+                tech_p(ui,
+                    "Fast (genetic): Start with the identity assignment and repeatedly \
+                     pick a random pair (a, b) within search radius r. Swap them if doing \
+                     so lowers the total cost:");
+
+                tech_table(ui,
+"swap(a, b)  if  cost(pa, tb) + cost(pb, ta)  <  cost(pa, ta) + cost(pb, tb)
+
+r  ←  max( r · 0.99,  2 )   after each generation");
+
+                tech_p(ui,
+                    "Optimal (Hungarian / Kuhn-Munkres): Builds the full N² × N² cost matrix \
+                     and finds the globally optimal assignment. Maintains a labelling (lx, ly) satisfying:");
+
+                tech_table(ui,
+"lx(i) + ly(j)  ≥  cost(i, j)   for all (i, j)
+
+Augments a matching along zero-slack edges until a perfect
+matching is found — that matching is provably optimal.");
             });
+
+            // ── Section 2 ────────────────────────────────────────────────────
+            tech_section(ui, "Phase 2 — Physics Simulation", true, false, |ui| {
+                tech_p(ui,
+                    "Each pixel is a particle with position p, velocity v, and acceleration a. \
+                     Four forces are summed each frame, then velocity and position are updated:");
+
+                tech_table(ui,
+"v  ←  ( v + a ) · 0.97       ← integrate & damp
+p  ←  p + clamp(v, −6, 6)    ← move (max 6 px / frame)
+age  ←  age + 1");
+
+                tech_p(ui, "Force 1 — Destination pull. Each particle is attracted to its target \
+                     position p_dst. The force ramps up cubically so motion starts slow and accelerates:");
+
+                tech_table(ui,
+"elapsed  =  age / 60                      ← time in seconds at 60 fps
+factor   =  min( (elapsed · k)³,  1000 )
+dist     =  ‖p_dst − p‖
+
+a  +=  (p_dst − p) · dist · factor / L
+
+k = 0.13  (preset animations),   L = canvas side length");
+
+                tech_p(ui, "The dist factor makes distant particles accelerate faster, \
+                    producing a snapping effect as they approach the target.");
+
+                tech_p(ui, "Force 2 — Neighbour repulsion. Particles repel each other within \
+                    personal space σ = 0.95 · pixel_size. For each neighbour j within σ of i:");
+
+                tech_table(ui,
+"d   =  ‖pj − pi‖
+w   =  (σ − d) / (σ · d)         ← weight → ∞ as d → 0
+
+ai  −=  (pj − pi) · w");
+
+                tech_p(ui, "Force 3 — Wall repulsion. Particles are pushed away from the canvas boundary:");
+
+                tech_table(ui,
+"σ_wall = σ / 2
+
+if  px < σ_wall :       ax  +=  (σ_wall − px) / σ_wall
+if  px > L − σ_wall :   ax  −=  (px − (L − σ_wall)) / σ_wall
+(and symmetrically for py / ay)");
+
+                tech_p(ui, "Force 4 — Velocity alignment. Particles nudge their velocity toward \
+                    the weighted average of their neighbours, producing flock-like coherent motion:");
+
+                tech_table(ui,
+"v̄  =  ( Σ vj · wj ) / ( Σ wj )      ← over all neighbours j
+
+a  +=  ( v̄ − v ) · 0.8");
+            });
+
+            // ── Section 3 ────────────────────────────────────────────────────
+            tech_section(ui, "Phase 3 — Voronoi Rendering (Jump Flood Algorithm)", true, true, |ui| {
+                tech_p(ui,
+                    "Every frame the GPU colours each pixel with the colour of its nearest \
+                     particle. A naïve search costs O(N² · S) per frame. The Jump Flood \
+                     Algorithm (JFA) approximates the Voronoi diagram in O(N² log N) using \
+                     only ⌈log₂ N⌉ GPU render passes.");
+
+                tech_p(ui, "Step 1 — Clear: every pixel initialised to sentinel ID = 0xFFFFFFFF.");
+                tech_p(ui, "Step 2 — Seed splat: seed i at position (xi, yi) writes its index to the nearest integer pixel.");
+                tech_p(ui, "Step 3 — JFA passes: k starts at 2^⌊log₂(max_dim)⌋ and halves each pass down to k = 1:");
+
+                tech_table(ui,
+"for each pass with step k:
+  for each pixel p = (px, py):
+    for each δ ∈ { (±k, 0), (0, ±k), (±k, ±k) }:
+      q  =  p + δ
+      if q has seed j at (xj, yj):
+        d²  =  (px − xj)² + (py − yj)²
+        if d² < d²_best:  best ← j,  d²_best ← d²
+    write best to pixel p");
+
+                tech_p(ui, "Step 4 — Shade: each pixel reads the colour stored for its \
+                    assigned seed index, producing the final mosaic frame.");
+
+                tech_p(ui, "For a 1024 × 1024 canvas this is 10 passes. For a 2048 × 2048 canvas, 11 passes.");
+            });
+
+            ui.add_space(80.0); // padding-bottom
         },
     );
 }
-
 
 fn get_default_preset_name(mut n: String) -> String {
     let mut name = {

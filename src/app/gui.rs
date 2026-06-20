@@ -3,6 +3,76 @@ use super::DRAWING_ALPHA;
 
 use super::GuiMode;
 use super::WilliamifyApp;
+
+// ── Design system ─────────────────────────────────────────────────────────────
+const C_BG: Color32 = Color32::from_rgb(0, 0, 0);
+const C_SURFACE: Color32 = Color32::from_rgb(10, 10, 10);
+fn c_border() -> Color32 { Color32::from_rgba_unmultiplied(255, 255, 255, 20) }
+fn c_border_hover() -> Color32 { Color32::from_rgba_unmultiplied(255, 255, 255, 38) }
+const C_TEXT: Color32 = Color32::from_rgb(237, 237, 237);
+const C_TEXT_MUTED: Color32 = Color32::from_rgb(102, 102, 102);
+const C_TEXT_DIM: Color32 = Color32::from_rgb(51, 51, 51);
+const C_GREEN: Color32 = Color32::from_rgb(74, 222, 128);
+const C_RED: Color32 = Color32::from_rgb(248, 113, 113);
+
+fn nav_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(C_BG)
+        .inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 0 })
+        .stroke(egui::Stroke::new(1.0, c_border()))
+}
+
+fn ctrl_frame() -> egui::Frame {
+    egui::Frame::new()
+        .fill(C_SURFACE)
+        .inner_margin(egui::Margin { left: 16, right: 16, top: 0, bottom: 0 })
+        .stroke(egui::Stroke::new(1.0, c_border()))
+}
+
+fn tab_btn(ui: &mut egui::Ui, label: &str, active: bool) -> egui::Response {
+    let color = if active { C_TEXT } else { C_TEXT_MUTED };
+    let resp = ui.add(
+        egui::Button::new(egui::RichText::new(label).size(13.0).color(color)).frame(false),
+    );
+    if active {
+        let r = resp.rect;
+        ui.painter()
+            .hline(r.x_range(), r.bottom() + 0.5, egui::Stroke::new(1.0, Color32::WHITE));
+    }
+    resp
+}
+
+fn ctrl_sep(ui: &mut egui::Ui) {
+    ui.add_space(4.0);
+    let (rect, _) =
+        ui.allocate_exact_size(egui::vec2(1.0, 16.0), egui::Sense::hover());
+    ui.painter().rect_filled(rect, 0.0, c_border_hover());
+    ui.add_space(4.0);
+}
+
+fn ctrl_label(ui: &mut egui::Ui, text: &str) {
+    ui.label(
+        egui::RichText::new(text.to_uppercase())
+            .size(11.0)
+            .color(C_TEXT_MUTED),
+    );
+}
+
+fn play_btn(ui: &mut egui::Ui) -> egui::Response {
+    ui.add(
+        egui::Button::new(egui::RichText::new("▶  play").size(12.0).color(C_GREEN).strong())
+            .fill(Color32::from_rgba_unmultiplied(74, 222, 128, 20))
+            .stroke(egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(74, 222, 128, 89))),
+    )
+}
+
+fn pause_btn(ui: &mut egui::Ui) -> egui::Response {
+    ui.add(
+        egui::Button::new(egui::RichText::new("⏸  pause").size(12.0).color(C_RED).strong())
+            .fill(Color32::from_rgba_unmultiplied(248, 113, 113, 20))
+            .stroke(egui::Stroke::new(1.0, Color32::from_rgba_unmultiplied(248, 113, 113, 89))),
+    )
+}
 use crate::app::DEFAULT_RESOLUTION;
 use crate::app::calculate;
 use crate::app::calculate::ProgressMsg;
@@ -54,6 +124,7 @@ pub(crate) struct GuiState {
     error_message: Option<String>,
 
     has_williamified_once: bool,
+    show_how_it_works: bool,
 }
 
 impl GuiState {
@@ -81,6 +152,7 @@ impl GuiState {
             current_preset,
             error_message: None,
             has_williamified_once,
+            show_how_it_works: false,
         }
     }
 
@@ -146,17 +218,7 @@ impl App for WilliamifyApp {
         };
 
         let device = &rs.device;
-        // Resize handling (match the egui "central panel" size)
-        //let available = ctx.available_rect();
-        // let target_size = (
-        //     available.width().max(1.0) as u32,
-        //     available.height().max(1.0) as u32,
-        // );
-        // if target_size != self.size {
-        //     self.resize(rs, target_size);
-        // }
 
-        // Ensure texture is registered exactly once per allocation
         self.ensure_registered_texture(
             rs,
             if self.size.0 < 512 {
@@ -171,7 +233,6 @@ impl App for WilliamifyApp {
 
         // Run GPU pipeline
         if let Some(img) = &self.preview_image {
-            // show image
             let img = if img.width() != self.size.0 || img.height() != self.size.1 {
                 &image::imageops::resize(
                     img,
@@ -222,46 +283,30 @@ impl App for WilliamifyApp {
                             for _ in 0..(60 / GIF_FRAMERATE) {
                                 self.sim.update(&mut self.seeds, self.size.0);
                             }
-
                             self.gif_recorder.frame_count += 1;
-
                             if self.gif_recorder.should_stop() {
-                                // finish recording
                                 if !self.gif_recorder.finish(
                                     self.gif_recorder.get_name(self.sim.name(), self.reverse),
                                 ) {
-                                    // cancelled
                                     self.stop_recording_gif(device, &rs.queue);
                                 }
-
                                 self.gui.animate = false;
                             } else {
-                                // queue next frame
                                 if let Err(e) = self.get_color_image_data(device, &rs.queue) {
                                     self.gif_recorder.status = GifStatus::Error(e.to_string());
                                 }
                             }
                         }
-
-                        Ok(false) => { /* not ready yet */ }
+                        Ok(false) => {}
                     }
                 } else {
                     self.sim.update(&mut self.seeds, self.size.0);
                 }
                 rs.queue
                     .write_buffer(&self.seed_buf, 0, bytemuck::cast_slice(&self.seeds));
-                // Update seed texture for WebGL compatibility
                 self.update_seed_texture_data(&rs.queue, &self.seeds);
             }
         }
-
-        // let dt = self.prev_frame_time.elapsed();
-        // self.prev_frame_time = std::time::Instant::now();
-        // self.gui.fps_text = format!(
-        //     "{:5.2} ms/frame (~{:06.0} FPS)",
-        //     dt.as_secs_f64() * 1000.0,
-        //     1.0 / dt.as_secs_f64()
-        // );
 
         let screen_width = ctx.available_rect().width();
         let baseline_zoom = if screen_width > ctx.available_rect().height() {
@@ -269,185 +314,223 @@ impl App for WilliamifyApp {
         } else {
             1.0_f32
         };
+        ctx.set_zoom_factor(baseline_zoom);
 
-        let btn_size = egui::vec2(160.0, 48.0);
-
-        egui::SidePanel::left("sidebar")
-            .resizable(false)
-            .exact_width(180.0)
+        // ── NAV BAR ───────────────────────────────────────────────────────────
+        egui::TopBottomPanel::top("navbar")
+            .frame(nav_frame())
+            .exact_height(48.0)
             .show(ctx, |ui| {
-                ui.ctx().set_zoom_factor(baseline_zoom);
-                ui.add_space(16.0);
-                ui.with_layout(
-                    egui::Layout::top_down_justified(egui::Align::Center),
-                    |ui| {
-                        // Upload button (glows until first use)
-                        let upload_btn = if !self.gui.has_williamified_once {
-                            let time = ui.input(|i| i.time);
-                            let pulse = ((time * 2.0).sin() * 0.5 + 0.5) as f32;
-                            let glow = egui::Color32::from_rgb(
-                                (30.0 + pulse * 100.0) as u8,
-                                (120.0 + pulse * 135.0) as u8,
-                                (200.0 + pulse * 55.0) as u8,
-                            );
-                            ui.add_sized(
-                                btn_size,
-                                egui::Button::new("upload your\nown image")
-                                    .stroke(egui::Stroke::new(1.5, glow)),
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new("williamifier")
+                            .size(13.0)
+                            .strong()
+                            .color(C_TEXT),
+                    );
+                    ui.add_space(16.0);
+                    if tab_btn(ui, "animation", !self.gui.show_how_it_works).clicked() {
+                        self.gui.show_how_it_works = false;
+                    }
+                    if tab_btn(ui, "how it works", self.gui.show_how_it_works).clicked() {
+                        self.gui.show_how_it_works = true;
+                    }
+                });
+            });
+
+        // ── HOW IT WORKS PAGE ─────────────────────────────────────────────────
+        if self.gui.show_how_it_works {
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(C_BG))
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            how_it_works_content(ui);
+                        });
+                });
+            ctx.request_repaint();
+            self.frame_count += 1;
+            return;
+        }
+
+        // ── CONTROL BAR ───────────────────────────────────────────────────────
+        egui::TopBottomPanel::top("controlbar")
+            .frame(ctrl_frame())
+            .exact_height(44.0)
+            .show(ctx, |ui| {
+                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                    // Upload button (pulses white until first use)
+                    let upload_resp = if !self.gui.has_williamified_once {
+                        let time = ui.input(|i| i.time);
+                        let pulse = ((time * 2.0).sin() * 0.5 + 0.5) as f32;
+                        let a = (20.0 + pulse * 18.0) as u8;
+                        ui.add(
+                            egui::Button::new(
+                                egui::RichText::new("upload image")
+                                    .size(12.0)
+                                    .color(C_TEXT),
                             )
+                            .stroke(egui::Stroke::new(
+                                1.0,
+                                Color32::from_rgba_unmultiplied(255, 255, 255, a),
+                            )),
+                        )
+                    } else {
+                        ui.add(
+                            egui::Button::new(
+                                egui::RichText::new("upload image").size(12.0).color(C_TEXT_MUTED),
+                            ),
+                        )
+                    };
+
+                    if upload_resp.clicked() {
+                        if let Some((ref img, ref settings)) = self.gui.saved_config {
+                            self.gui.configuring_generation = Some((
+                                img.clone(),
+                                settings.clone_with_new_id(),
+                                GuiImageCache::default(),
+                            ));
+                            #[cfg(target_arch = "wasm32")]
+                            hide_icons();
                         } else {
-                            ui.add_sized(btn_size, egui::Button::new("upload your\nown image"))
-                        };
-
-                        if upload_btn.clicked() {
-                            if let Some((ref img, ref settings)) = self.gui.saved_config {
-                                self.gui.configuring_generation = Some((
-                                    img.clone(),
-                                    settings.clone_with_new_id(),
-                                    GuiImageCache::default(),
-                                ));
-                                #[cfg(target_arch = "wasm32")]
-                                hide_icons();
-                            } else {
-                                prompt_image(
-                                    "choose image to williamify",
-                                    self,
-                                    |name: String, mut img: SourceImg, app: &mut WilliamifyApp| {
-                                        img = ensure_reasonable_size(img);
-                                        app.gui.configuring_generation = Some((
-                                            img,
-                                            GenerationSettings::default(Uuid::new_v4(), name),
-                                            GuiImageCache::default(),
-                                        ));
-                                        #[cfg(target_arch = "wasm32")]
-                                        hide_icons();
-                                    },
-                                );
-                            }
+                            prompt_image(
+                                "choose image to williamify",
+                                self,
+                                |name: String, mut img: SourceImg, app: &mut WilliamifyApp| {
+                                    img = ensure_reasonable_size(img);
+                                    app.gui.configuring_generation = Some((
+                                        img,
+                                        GenerationSettings::default(Uuid::new_v4(), name),
+                                        GuiImageCache::default(),
+                                    ));
+                                    #[cfg(target_arch = "wasm32")]
+                                    hide_icons();
+                                },
+                            );
                         }
+                    }
 
-                        ui.add_space(8.0);
+                    ctrl_sep(ui);
 
-                        if ui
-                            .add_sized(btn_size, egui::Button::new("▶  play"))
-                            .clicked()
-                        {
+                    // Play / Pause
+                    if self.gui.animate {
+                        if pause_btn(ui).clicked() {
+                            self.gui.animate = false;
+                        }
+                    } else {
+                        if play_btn(ui).clicked() {
                             self.gui.animate = true;
                             self.sim.prepare_play(&mut self.seeds, self.reverse);
                         }
+                    }
 
-                        ui.add_space(8.0);
+                    ctrl_sep(ui);
 
-                        // Preset picker
-                        ui.label("choose preset:");
-                        egui::ComboBox::from_id_salt("preset_picker")
-                            .width(btn_size.x)
-                            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                            .selected_text({
+                    // Preset picker
+                    ctrl_label(ui, "preset");
+                    egui::ComboBox::from_id_salt("preset_picker")
+                        .width(120.0)
+                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                        .selected_text(
+                            egui::RichText::new({
                                 let name = self.sim.name();
                                 if name.chars().count() > 13 {
-                                    let truncated: String = name.chars().take(10).collect();
-                                    format!("{truncated}…")
+                                    format!("{}…", name.chars().take(10).collect::<String>())
                                 } else {
-                                    name.clone()
+                                    name
                                 }
                             })
-                            .show_ui(ui, |ui| {
-                                let mut to_remove: Option<usize> = None;
-                                let mut close_menu = false;
-
-                                for (i, preset) in self.gui.presets.clone().into_iter().enumerate()
-                                {
-                                    ui.horizontal(|ui| {
-                                        let remove_enabled = self.gui.presets.len() > 4;
-
-                                        let del_width = if remove_enabled {
-                                            let txt = egui::WidgetText::from("x");
-                                            let galley = txt.into_galley(
-                                                ui,
-                                                None,
-                                                f32::INFINITY,
-                                                egui::TextStyle::Button,
-                                            );
-                                            galley.size().x + ui.spacing().button_padding.x * 2.0
-                                        } else {
-                                            0.0
-                                        };
-                                        let spacing = if remove_enabled {
-                                            ui.spacing().item_spacing.x
-                                        } else {
-                                            0.0
-                                        };
-                                        let preset_width =
-                                            (ui.available_width() - del_width - spacing).max(0.0);
-
-                                        let selected = i == self.gui.current_preset;
-                                        let preset_resp = ui.add_sized(
-                                            [preset_width, ui.spacing().interact_size.y],
-                                            egui::Button::selectable(selected, &preset.inner.name),
+                            .size(12.0)
+                            .color(C_TEXT),
+                        )
+                        .show_ui(ui, |ui| {
+                            let mut to_remove: Option<usize> = None;
+                            let mut close_menu = false;
+                            for (i, preset) in self.gui.presets.clone().into_iter().enumerate() {
+                                ui.horizontal(|ui| {
+                                    let remove_enabled = self.gui.presets.len() > 4;
+                                    let del_width = if remove_enabled {
+                                        let txt = egui::WidgetText::from("x");
+                                        let galley = txt.into_galley(
+                                            ui,
+                                            None,
+                                            f32::INFINITY,
+                                            egui::TextStyle::Button,
                                         );
-
-                                        if remove_enabled
-                                            && ui
-                                                .small_button("x")
-                                                .on_hover_text("delete preset")
-                                                .clicked()
-                                        {
-                                            to_remove = Some(i);
-                                        } else if preset_resp.clicked() {
-                                            self.change_sim(device, &rs.queue, preset.clone(), i);
-                                            self.gui.animate = true;
-                                            self.gui.current_preset = i;
-                                            close_menu = true;
-                                        }
-                                    });
-                                }
-
-                                if let Some(idx) = to_remove {
-                                    let removed_current = idx == self.gui.current_preset;
-                                    self.gui.presets.remove(idx);
-                                    if removed_current {
-                                        let new_index = idx.min(self.gui.presets.len() - 1);
-                                        self.change_sim(
-                                            device,
-                                            &rs.queue,
-                                            self.gui.presets[new_index].clone(),
-                                            new_index,
-                                        );
-                                        self.gui.current_preset = new_index;
-                                    } else if idx < self.gui.current_preset {
-                                        self.gui.current_preset -= 1;
+                                        galley.size().x + ui.spacing().button_padding.x * 2.0
+                                    } else {
+                                        0.0
+                                    };
+                                    let spacing = if remove_enabled {
+                                        ui.spacing().item_spacing.x
+                                    } else {
+                                        0.0
+                                    };
+                                    let preset_width =
+                                        (ui.available_width() - del_width - spacing).max(0.0);
+                                    let selected = i == self.gui.current_preset;
+                                    let preset_resp = ui.add_sized(
+                                        [preset_width, ui.spacing().interact_size.y],
+                                        egui::Button::selectable(selected, &preset.inner.name),
+                                    );
+                                    if remove_enabled
+                                        && ui.small_button("x").on_hover_text("delete").clicked()
+                                    {
+                                        to_remove = Some(i);
+                                    } else if preset_resp.clicked() {
+                                        self.change_sim(device, &rs.queue, preset.clone(), i);
+                                        self.gui.animate = true;
+                                        self.gui.current_preset = i;
+                                        close_menu = true;
                                     }
+                                });
+                            }
+                            if let Some(idx) = to_remove {
+                                let removed_current = idx == self.gui.current_preset;
+                                self.gui.presets.remove(idx);
+                                if removed_current {
+                                    let new_index = idx.min(self.gui.presets.len() - 1);
+                                    self.change_sim(
+                                        device,
+                                        &rs.queue,
+                                        self.gui.presets[new_index].clone(),
+                                        new_index,
+                                    );
+                                    self.gui.current_preset = new_index;
+                                } else if idx < self.gui.current_preset {
+                                    self.gui.current_preset -= 1;
                                 }
+                            }
+                            if close_menu {
+                                ui.close();
+                            }
+                        });
 
-                                if close_menu {
-                                    ui.close();
-                                }
-                            });
-
-                        // export preset (native dev tool, pushed to bottom)
-                        #[cfg(not(target_arch = "wasm32"))]
+                    // Export preset — native only, pushed to the right
+                    #[cfg(not(target_arch = "wasm32"))]
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .add(egui::Button::new(
+                                egui::RichText::new("export preset").size(12.0).color(C_TEXT_DIM),
+                            ))
+                            .on_hover_text("save to presets/<name>/ for hardcoding")
+                            .clicked()
                         {
-                            ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                                ui.add_space(8.0);
-                                if ui
-                                    .add_sized(btn_size, egui::Button::new("export preset"))
-                                    .on_hover_text("save to presets/<name>/ for hardcoding")
-                                    .clicked()
-                                {
-                                    let preset = &self.gui.presets[self.gui.current_preset];
-                                    match export_preset(preset) {
-                                        Ok(dir) => {
-                                            opener::open(&dir).ok();
-                                        }
-                                        Err(e) => self.gui.show_error(e.to_string()),
-                                    }
+                            let preset = &self.gui.presets[self.gui.current_preset];
+                            match export_preset(preset) {
+                                Ok(dir) => {
+                                    opener::open(&dir).ok();
                                 }
-                            });
+                                Err(e) => self.gui.show_error(e.to_string()),
+                            }
                         }
-                    },
-                );
+                    });
+                });
             });
+
+        // ── MODAL WINDOWS ─────────────────────────────────────────────────────
         if self.gui.configuring_generation.is_some() {
             Window::new("williamification settings")
                 .max_width(screen_width.min(400.0) * 0.8)
@@ -821,6 +904,32 @@ impl App for WilliamifyApp {
                 self.gui.hide_error();
             }
         }
+        if self.gui.show_how_it_works {
+            egui::TopBottomPanel::top("hiw_topbar")
+                .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(16, 10)))
+                .show(ctx, |ui| {
+                    ui.ctx().set_zoom_factor(baseline_zoom);
+                    ui.horizontal(|ui| {
+                        if ui.button("← back").clicked() {
+                            self.gui.show_how_it_works = false;
+                        }
+                    });
+                });
+            egui::CentralPanel::default()
+                .frame(egui::Frame::new().fill(egui::Color32::from_rgb(248, 248, 246)))
+                .show(ctx, |ui| {
+                    ui.ctx().set_zoom_factor(baseline_zoom);
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            how_it_works_content(ui);
+                        });
+                });
+            ctx.request_repaint();
+            self.frame_count += 1;
+            return;
+        }
+
         egui::CentralPanel::default()
             .frame(egui::Frame::new())
             .show(ctx, |ui| {
@@ -1054,6 +1163,227 @@ fn export_preset(preset: &Preset) -> Result<String, Box<dyn std::error::Error>> 
 
     Ok(dir)
 }
+
+fn tech_section(
+    ui: &mut egui::Ui,
+    title: &str,
+    default_open: bool,
+    content: impl FnOnce(&mut egui::Ui),
+) {
+    ui.add(egui::Separator::default().spacing(0.0));
+    egui::CollapsingHeader::new(
+        egui::RichText::new(title.to_uppercase())
+            .size(12.0)
+            .strong()
+            .color(C_TEXT),
+    )
+    .default_open(default_open)
+    .show(ui, |ui| {
+        ui.add_space(6.0);
+        content(ui);
+        ui.add_space(32.0);
+    });
+}
+
+fn tech_body(ui: &mut egui::Ui, text: &str) {
+    ui.label(egui::RichText::new(text).size(14.0).color(C_TEXT).line_height(Some(14.0 * 1.8)));
+    ui.add_space(6.0);
+}
+
+fn tech_table(ui: &mut egui::Ui, lines: &[&str]) {
+    ui.add_space(6.0);
+    egui::Frame::new()
+        .fill(C_SURFACE)
+        .corner_radius(8.0)
+        .stroke(egui::Stroke::new(1.0, c_border()))
+        .inner_margin(egui::Margin::symmetric(18, 14))
+        .show(ui, |ui| {
+            for &line in lines {
+                ui.label(
+                    egui::RichText::new(line)
+                        .monospace()
+                        .size(11.5)
+                        .color(C_TEXT)
+                        .line_height(Some(11.5 * 1.7)),
+                );
+            }
+        });
+    ui.add_space(10.0);
+}
+
+fn tech_example(ui: &mut egui::Ui, text: &str) {
+    ui.add_space(4.0);
+    egui::Frame::new()
+        .fill(C_SURFACE)
+        .corner_radius(6.0)
+        .stroke(egui::Stroke::new(1.0, c_border()))
+        .inner_margin(egui::Margin::symmetric(14, 10))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new("example")
+                    .size(11.0)
+                    .strong()
+                    .color(C_TEXT_MUTED)
+                    .monospace(),
+            );
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(text).size(13.0).color(C_TEXT).line_height(Some(13.0 * 1.7)));
+        });
+    ui.add_space(8.0);
+}
+
+fn how_it_works_content(ui: &mut egui::Ui) {
+    let content_width = ui.available_width().min(860.0);
+
+    ui.allocate_ui_with_layout(
+        egui::vec2(ui.available_width(), 0.0),
+        egui::Layout::top_down(egui::Align::Center),
+        |ui| {
+            ui.set_max_width(content_width);
+            let pad = 40.0_f32.min(content_width * 0.05);
+            ui.add_space(48.0);
+
+            ui.with_layout(egui::Layout::top_down(egui::Align::Min), |ui| {
+                ui.add_space(pad);
+
+                ui.label(
+                    egui::RichText::new("How it works")
+                        .size(22.0)
+                        .strong()
+                        .color(C_TEXT),
+                );
+                ui.add_space(10.0);
+                ui.label(
+                    egui::RichText::new(
+                        "The Williamifier transforms any image into William's face by moving                          each pixel to a matching position. Three phases: (1) finding the                          best pixel-to-pixel assignment offline, (2) simulating each pixel                          flying to its destination, and (3) rendering the current positions                          as a Voronoi mosaic on the GPU.",
+                    )
+                    .size(14.0)
+                    .color(C_TEXT_MUTED)
+                    .line_height(Some(14.0 * 1.75)),
+                );
+                ui.add_space(36.0);
+
+                tech_section(ui, "Phase 1 — Pixel Assignment", true, |ui| {
+                    tech_body(
+                        ui,
+                        "Before the animation runs, every pixel in your image must be matched                          to exactly one position in William's face — a one-to-one bijection.                          Both images are resampled to an N × N grid (default N = 128).",
+                    );
+                    ui.label(egui::RichText::new("Cost function").size(13.0).strong().color(C_TEXT));
+                    ui.add_space(6.0);
+                    tech_body(
+                        ui,
+                        "For source pixel s at (xs, ys) with colour (rs, gs, bs) and target t at (xt, yt) with colour (rt, gt, bt):",
+                    );
+                    tech_table(ui, &[
+                        "cost(s, t)  =  Dc2(s,t) * w(t)  +  ( Dp2(s,t) * L )^2",
+                        "",
+                        "Dc2(s,t)  =  (rs - rt)^2 + (gs - gt)^2 + (bs - bt)^2   <- colour distance^2",
+                        "Dp2(s,t)  =  (xs - xt)^2 + (ys - yt)^2                 <- spatial distance^2",
+                        "",
+                        "w(t)  -- importance weight for target pixel t  (from William's face)",
+                        "L     -- proximity slider  (0 = colour only,  large = stay nearby)",
+                    ]);
+                    tech_example(
+                        ui,
+                        "Two pixels with colour error Dc2 = 100.\n                         A: Dp2 = 25  (5 units away)    cost = 100 + (25*5)^2  =  15 725\n                         B: Dp2 = 1600 (40 units away)  cost = 100 + (1600*5)^2 = 64 000 100\n                         Increasing L strongly penalises long-distance moves.",
+                    );
+                    ui.label(egui::RichText::new("Fast algorithm (genetic)").size(13.0).strong().color(C_TEXT));
+                    ui.add_space(6.0);
+                    tech_body(ui, "Pick random pair (a, b) within radius r, swap if it lowers total cost:");
+                    tech_table(ui, &[
+                        "swap(a,b)  if  cost(pa,tb) + cost(pb,ta)  <  cost(pa,ta) + cost(pb,tb)",
+                        "r  <-  max( r * 0.99,  2 )   after each generation",
+                    ]);
+                    ui.label(egui::RichText::new("Optimal algorithm (Hungarian / Kuhn-Munkres)").size(13.0).strong().color(C_TEXT));
+                    ui.add_space(6.0);
+                    tech_body(ui, "Finds globally optimal assignment. Maintains labelling (lx, ly) satisfying:");
+                    tech_table(ui, &[
+                        "lx(i) + ly(j)  >=  cost(i, j)   for all (i, j)",
+                        "",
+                        "Augments a matching along zero-slack edges until a perfect",
+                        "matching is found -- that matching is provably optimal.",
+                    ]);
+                });
+
+                tech_section(ui, "Phase 2 — Physics Simulation", true, |ui| {
+                    tech_body(ui, "Each particle has position p, velocity v, acceleration a. Every frame:");
+                    tech_table(ui, &[
+                        "v  <-  ( v + a ) * 0.97       <- integrate & damp",
+                        "p  <-  p + clamp(v, -6, 6)    <- move  (max 6 px/frame)",
+                        "age  <-  age + 1",
+                    ]);
+                    ui.label(egui::RichText::new("Force 1 — Destination pull").size(13.0).strong().color(C_TEXT));
+                    ui.add_space(6.0);
+                    tech_body(ui, "Cubic ramp-up pulls each particle toward its target p_dst:");
+                    tech_table(ui, &[
+                        "elapsed  =  age / 60                      <- seconds at 60 fps",
+                        "factor   =  min( (elapsed * k)^3,  1000 )",
+                        "dist     =  ||p_dst - p||",
+                        "",
+                        "a  +=  (p_dst - p) * dist * factor / L",
+                        "",
+                        "k = 0.13  (preset animations),   L = canvas side length",
+                    ]);
+                    ui.label(egui::RichText::new("Force 2 — Neighbour repulsion").size(13.0).strong().color(C_TEXT));
+                    ui.add_space(6.0);
+                    tech_body(ui, "Particles repel within personal space s = 0.95 * pixel_size:");
+                    tech_table(ui, &[
+                        "d   =  ||pj - pi||",
+                        "w   =  (s - d) / (s * d)         <- weight -> inf as d -> 0",
+                        "",
+                        "ai  -=  (pj - pi) * w",
+                    ]);
+                    ui.label(egui::RichText::new("Force 3 — Wall repulsion").size(13.0).strong().color(C_TEXT));
+                    ui.add_space(6.0);
+                    tech_table(ui, &[
+                        "sw = s / 2",
+                        "if  px < sw :       ax  +=  (sw - px) / sw",
+                        "if  px > L - sw :   ax  -=  (px - (L - sw)) / sw   (same for py/ay)",
+                    ]);
+                    ui.label(egui::RichText::new("Force 4 — Velocity alignment").size(13.0).strong().color(C_TEXT));
+                    ui.add_space(6.0);
+                    tech_table(ui, &[
+                        "v_avg  =  ( Sum vj * wj ) / ( Sum wj )      <- over all neighbours j",
+                        "a  +=  ( v_avg - v ) * 0.8",
+                    ]);
+                    tech_example(
+                        ui,
+                        "3 neighbours with velocities (3,0), (1,2), (-1,1) and equal weights:\n                         v_avg = ( (3+1-1)/3, (0+2+1)/3 ) = (1, 1)\n                         Current v = (0, 0)  ->  a += (1,1)*0.8 = (0.8, 0.8)",
+                    );
+                });
+
+                tech_section(ui, "Phase 3 — Voronoi Rendering (JFA)", true, |ui| {
+                    tech_body(
+                        ui,
+                        "Every frame the GPU colours each pixel with the colour of its nearest                          particle. Naive search costs O(N^2 * S). The Jump Flood Algorithm (JFA)                          does it in O(N^2 log N) with ceil(log2 N) passes.",
+                    );
+                    tech_body(ui, "1. Clear  -- every pixel set to sentinel ID = 0xFFFFFFFF.");
+                    tech_body(ui, "2. Seed splat -- seed i at (xi, yi) writes its index to the nearest integer pixel.");
+                    tech_body(ui, "3. JFA passes -- k starts at 2^floor(log2(max_dim)) and halves each pass:");
+                    tech_table(ui, &[
+                        "for each pass with step k:",
+                        "  for each pixel p = (px, py):",
+                        "    for each d in { (+-k,0), (0,+-k), (+-k,+-k) }:",
+                        "      q  =  p + d",
+                        "      if q has seed j at (xj, yj):",
+                        "        d2  =  (px - xj)^2 + (py - yj)^2",
+                        "        if d2 < d2_best:  best <- j,  d2_best <- d2",
+                        "    write best to pixel p",
+                    ]);
+                    tech_body(ui, "4. Shade -- each pixel reads the colour of its assigned seed.");
+                    tech_body(ui, "For a 1024 x 1024 canvas this is 10 passes.");
+                    tech_example(
+                        ui,
+                        "8x8 grid, seeds A=(1,1) and B=(6,5). First pass k=4.\n                         Pixel p=(5,2): A -> d2=(5-1)^2+(2-1)^2=17,  B -> d2=(5-6)^2+(2-5)^2=10  -> best=B.\n                         After k=2 and k=1 passes, every pixel knows its nearest seed.",
+                    );
+                });
+
+                ui.add_space(pad);
+            });
+        },
+    );
+}
+
 
 fn get_default_preset_name(mut n: String) -> String {
     let mut name = {

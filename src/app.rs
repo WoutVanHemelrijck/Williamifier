@@ -164,6 +164,48 @@ pub struct WilliamifyApp {
 }
 
 impl WilliamifyApp {
+    pub fn make_visuals() -> egui::Visuals {
+        use egui::Color32;
+        let bg = Color32::BLACK;
+        let surface = Color32::from_rgb(10, 10, 10);
+        let border = Color32::from_rgba_unmultiplied(255, 255, 255, 20);
+        let border_hover = Color32::from_rgba_unmultiplied(255, 255, 255, 38);
+        let text = Color32::from_rgb(237, 237, 237);
+        let text_muted = Color32::from_rgb(102, 102, 102);
+
+        let mut v = egui::Visuals::dark();
+        v.panel_fill = bg;
+        v.window_fill = Color32::from_rgb(13, 13, 13);
+        v.extreme_bg_color = Color32::from_rgb(5, 5, 5);
+        v.faint_bg_color = surface;
+        v.override_text_color = Some(text);
+        v.window_stroke = egui::Stroke::new(1.0, border);
+        v.popup_shadow = egui::Shadow::NONE;
+        v.window_shadow = egui::Shadow::NONE;
+
+        let cr = egui::CornerRadius::same(6);
+        let make_wv = |fg: Color32, fill: Color32, stroke: Color32| egui::style::WidgetVisuals {
+            bg_fill: fill,
+            weak_bg_fill: fill,
+            bg_stroke: egui::Stroke::new(1.0, stroke),
+            fg_stroke: egui::Stroke::new(1.0, fg),
+            corner_radius: cr,
+            expansion: 0.0,
+        };
+
+        v.widgets.noninteractive = make_wv(text_muted, bg, border);
+        v.widgets.inactive = make_wv(text_muted, Color32::TRANSPARENT, border);
+        v.widgets.hovered =
+            make_wv(text, Color32::from_rgba_unmultiplied(255, 255, 255, 10), border_hover);
+        v.widgets.active =
+            make_wv(text, Color32::from_rgba_unmultiplied(255, 255, 255, 15), border_hover);
+        v.widgets.open =
+            make_wv(text, Color32::from_rgba_unmultiplied(255, 255, 255, 8), border);
+        v.selection.bg_fill = Color32::from_rgba_unmultiplied(255, 255, 255, 40);
+        v.selection.stroke = egui::Stroke::new(1.0, text);
+        v
+    }
+
     fn apply_sim_init(
         &mut self,
         device: &wgpu::Device,
@@ -258,17 +300,9 @@ impl WilliamifyApp {
         let size = (DEFAULT_RESOLUTION, DEFAULT_RESOLUTION);
         egui_extras::install_image_loaders(&cc.egui_ctx);
 
-        let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert(
-            "comic_sans".to_owned(),
-            egui::FontData::from_static(include_bytes!("../assets/ComicSansMS.ttf")).into(),
-        );
-        fonts
-            .families
-            .get_mut(&egui::FontFamily::Proportional)
-            .unwrap()
-            .insert(0, "comic_sans".to_owned());
+        let fonts = egui::FontDefinitions::default();
         cc.egui_ctx.set_fonts(fonts);
+        cc.egui_ctx.set_visuals(Self::make_visuals());
 
         // get all folders in ../presets
         let presets: Vec<Preset> = if let Some(storage) = cc.storage {

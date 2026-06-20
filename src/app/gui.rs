@@ -1318,7 +1318,7 @@ fn how_it_works_content(ui: &mut egui::Ui) {
             tech_section(ui, "Phase 1 — Pixel Assignment", true, false, |ui| {
                 tech_p(ui,
                     "Before the animation can run, every pixel in your image must be matched \
-                     to exactly one position in William's face — a one-to-one bijection. \
+                     to exactly one position in William's face, so a one-to-one bijection. \
                      Both images are resampled to an N × N grid (default N = 128). \
                      We then search for the assignment that minimises a total cost.");
 

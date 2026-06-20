@@ -8,8 +8,8 @@ fn regen_presets() {
     let presets_dir = manifest_dir.join("presets");
 
     // Load target + weights (same files the app embeds at compile time)
-    let target_bytes = include_bytes!("app/calculate/target256.png");
-    let weights_bytes = include_bytes!("app/calculate/weights256.png");
+    let target_bytes = include_bytes!("app/calculate/data/target.png");
+    let weights_bytes = include_bytes!("app/calculate/data/weights.png");
     let target_img = image::load_from_memory(target_bytes)
         .expect("target")
         .to_rgb8();

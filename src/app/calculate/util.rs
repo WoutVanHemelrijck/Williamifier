@@ -233,7 +233,7 @@ impl GenerationSettings {
             vec![255; (self.sidelen * self.sidelen) as usize] // uniform weights
         } else {
             let target_weights =
-                image::load_from_memory(include_bytes!("weights256.png"))?.to_rgb8();
+                image::load_from_memory(include_bytes!("data/weights.png"))?.to_rgb8();
             let target_weights = self.target_crop_scale.apply(&target_weights, self.sidelen);
             load_weights(target_weights)
         };
@@ -245,7 +245,7 @@ impl GenerationSettings {
         if let Some((w, h, data)) = &self.custom_target {
             image::ImageBuffer::from_vec(*w, *h, data.clone()).unwrap()
         } else {
-            image::load_from_memory(include_bytes!("target256.png"))
+            image::load_from_memory(include_bytes!("data/target.png"))
                 .unwrap()
                 .to_rgb8()
         }
